@@ -61,6 +61,14 @@ def sync_python_files():
         print(f"  ⚠️  Backend directory not found: {BACKEND_DIR}")
         return
 
+    # Ensure backend package exists
+    android_backend_dir = os.path.join(ANDROID_PYTHON_DIR, "backend")
+    os.makedirs(android_backend_dir, exist_ok=True)
+    init_file = os.path.join(android_backend_dir, "__init__.py")
+    if not os.path.exists(init_file):
+        with open(init_file, "w") as f:
+            f.write("# Auto-generated package init\n")
+
     # Sync all .py files from the backend directory (recursive)
     for root, dirs, files in os.walk(BACKEND_DIR):
         for filename in files:
@@ -69,9 +77,9 @@ def sync_python_files():
                 
             src = os.path.join(root, filename)
             
-            # Calculate relative path to maintain structure
+            # Calculate relative path to maintain structure inside the new backend/ package
             rel_path = os.path.relpath(src, BACKEND_DIR)
-            dst = os.path.join(ANDROID_PYTHON_DIR, rel_path)
+            dst = os.path.join(android_backend_dir, rel_path)
             
             # Ensure destination directory exists
             os.makedirs(os.path.dirname(dst), exist_ok=True)
@@ -79,15 +87,7 @@ def sync_python_files():
         with open(src, "r", encoding="utf-8") as f:
             content = f.read()
 
-        # Rewrite relative imports for Chaquopy flat structure
-        # `from .module import X` -> `from module import X`
-        content = re.sub(r"from \.([a-zA-Z0-9_]+) import", r"from \1 import", content)
-        
-        # `from . import module` -> `import module`
-        content = re.sub(r"from \. import ([a-zA-Z0-9_]+)", r"import \1", content)
-        
-        # `from . import module as alias` -> `import module as alias`
-        content = re.sub(r"from \. import ([a-zA-Z0-9_]+ as [a-zA-Z0-9_]+)", r"import \1", content)
+        # (Removed relative import flattening — we now preserve the backend folder structure!)
 
         # Rewrite pywebapp.core imports to flat imports for Chaquopy
         # This handles combined imports like `from pywebapp.core import register, get_logger`

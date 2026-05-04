@@ -118,9 +118,12 @@ def main():
             safe_print("Error: Frontend build not found.")
             return
         
-        # Windows file path to URI fix (Using pathlib for 100% compliance)
-        from pathlib import Path
-        url = Path(index_html).absolute().as_uri()
+        # 🚀 Start our own Flask server in a background thread
+        # This replaces the broken file:// URI approach and pywebview's unreliable http_server
+        from pywebapp.core.server import start_server
+        server_thread, port = start_server(frontend_dist, port=0)
+        url = f"http://localhost:{port}"
+        safe_print(f"📡 Internal server started at {url}")
 
     bridge = DesktopBridge()
     
@@ -133,9 +136,8 @@ def main():
         height=800
     )
     
-    # Start the app with the internal HTTP server enabled (Native Universal Fix)
-    # This avoids file:// URI issues and provides a consistent local environment
-    webview.start(debug=is_dev, http_server=not is_dev)
+    # Start the app (no http_server flag needed — we run our own)
+    webview.start(debug=is_dev)
 
 if __name__ == '__main__':
     main()

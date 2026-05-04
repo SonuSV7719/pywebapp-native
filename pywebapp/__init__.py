@@ -10,4 +10,4 @@ Usage:
         return a + b
 """
 
-__version__ = "2.1.4"
+__version__ = "2.2.1"

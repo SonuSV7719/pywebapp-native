@@ -142,10 +142,11 @@ def main():
     from pywebapp import __version__
     parser = argparse.ArgumentParser(description="PyWebApp Framework CLI")
     parser.add_argument('--version', action='version', version=f'%(prog)s {__version__}')
-    parser.add_argument('command', nargs='?', choices=['init', 'dev', 'build-android', 'build-desktop', 'build-linux', 'build-web'], 
+    parser.add_argument('command', nargs='?', choices=['init', 'dev', 'build-android', 'build-desktop', 'build-linux', 'build-web', 'serve'], 
                         help='Command to execute')
     parser.add_argument('name', nargs='?', help='Project name for init command')
     parser.add_argument('--password', help='Keystore password for build-android')
+    parser.add_argument('--port', type=int, default=18090, help='Port for serve command (default: 18090)')
     
     args = parser.parse_args()
 
@@ -164,6 +165,13 @@ def main():
         elif args.command == 'build-web':
             build_frontend()
             print("\n🌐 Web build complete! Folder: frontend/dist")
+            print("   Run 'pywebapp serve' to test with live Python API.")
+        elif args.command == 'serve':
+            frontend_dist = os.path.join(os.getcwd(), 'frontend', 'dist')
+            if os.getcwd() not in sys.path:
+                sys.path.insert(0, os.getcwd())
+            from pywebapp.core.server import start_server_blocking
+            start_server_blocking(frontend_dist, port=args.port)
         elif args.command == 'build-android':
             build_frontend()
             from pywebapp.scripts.build_android_release import main as release_main

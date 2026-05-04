@@ -50,15 +50,21 @@ def _discover_user_handlers():
             logger.info(f"Discovered handler root: {target}")
             _handlers_loaded = True
             
-            # 2. Recursively discover all sub-modules if it's a package
-            if hasattr(root_module, "__path__"):
-                for _, name, is_pkg in pkgutil.walk_packages(root_module.__path__, root_module.__name__ + "."):
-                    if not is_pkg:
-                        try:
-                            importlib.import_module(name)
-                            logger.debug(f"  Auto-imported sub-module: {name}")
-                        except Exception as e:
-                            logger.warning(f"  Failed to import {name}: {e}")
+            # 2. Recursively discover all sub-modules
+            if hasattr(root_module, "__file__") and root_module.__file__:
+                import os
+                root_dir = os.path.dirname(root_module.__file__)
+                for dirpath, _, filenames in os.walk(root_dir):
+                    for filename in filenames:
+                        if filename.endswith(".py") and filename != "__init__.py":
+                            # Reconstruct module name (e.g., backend.handlers.auth)
+                            rel_path = os.path.relpath(os.path.join(dirpath, filename), root_dir)
+                            mod_name = root_module.__name__ + "." + rel_path[:-3].replace(os.sep, ".")
+                            try:
+                                importlib.import_module(mod_name)
+                                logger.debug(f"  Auto-imported sub-module: {mod_name}")
+                            except Exception as e:
+                                logger.warning(f"  Failed to import {mod_name}: {e}")
         except ImportError:
             continue
 
