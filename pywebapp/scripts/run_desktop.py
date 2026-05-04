@@ -39,14 +39,9 @@ if PROJECT_ROOT not in sys.path:
 try:
     from pywebapp.core.api import dispatch
     safe_print("Backend logic connected via pywebapp.core.")
-except ImportError:
-    try:
-        from backend import api
-        dispatch = api.dispatch
-        safe_print("Backend logic connected via local backend.")
-    except ImportError as e:
-        safe_print(f"Error: Could not load backend. {e}")
-        dispatch = None
+except ImportError as e:
+    safe_print(f"Error: Could not load pywebapp.core.api. {e}")
+    dispatch = None
 
 import webview
 
