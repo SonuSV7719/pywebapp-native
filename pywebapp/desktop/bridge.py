@@ -60,6 +60,36 @@ class BridgeApi:
         methods = list_methods()
         return json.dumps(methods)
 
+    def pickFile(self, dialog_title: str = "Select File", file_types: list = None) -> str:
+        """
+        Natively pick a file and return its absolute path.
+        """
+        if file_types is None:
+            file_types = ["All files (*.*)"]
+            
+        import webview
+        window = webview.active_window()
+        if not window:
+            return json.dumps({"success": False, "error": "No active window"})
+            
+        try:
+            result = window.create_file_dialog(webview.OPEN_DIALOG, dialog_title=dialog_title, file_types=file_types)
+            if result and len(result) > 0:
+                file_path = result[0]
+                # Format response for the JS bridge
+                response = {
+                    "success": True, 
+                    "path": file_path, 
+                    "uri": f"file://{file_path}", 
+                    "name": os.path.basename(file_path)
+                }
+                return json.dumps(response)
+        except Exception as e:
+            logger.error(f"pickFile error: {e}")
+            return json.dumps({"success": False, "error": str(e)})
+            
+        return json.dumps({"success": False, "error": "Cancelled"})
+
     def ping(self) -> str:
         """
         Health check endpoint.
