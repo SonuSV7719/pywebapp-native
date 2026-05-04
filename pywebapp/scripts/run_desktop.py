@@ -104,7 +104,10 @@ def main():
         if not os.path.exists(index_html):
             safe_print("Error: Frontend build not found.")
             return
-        url = f'file://{index_html}'
+        
+        # Windows file path to URI fix (requires file:/// and forward slashes)
+        abs_path = os.path.abspath(index_html)
+        url = 'file:///' + abs_path.replace('\\', '/')
 
     bridge = DesktopBridge()
     

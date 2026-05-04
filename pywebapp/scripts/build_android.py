@@ -37,6 +37,18 @@ def sync_python_files():
 
     os.makedirs(ANDROID_PYTHON_DIR, exist_ok=True)
 
+    # 🧹 CLEANUP: Remove old synced files to prevent "ghost" file conflicts
+    # (e.g. an old handlers.py file blocking a new handlers/ folder)
+    print("  🧹 Cleaning old Python files...")
+    for item in os.listdir(ANDROID_PYTHON_DIR):
+        item_path = os.path.join(ANDROID_PYTHON_DIR, item)
+        # Don't delete standard framework files yet, they will be updated in _sync_core_files
+        if item not in ["api.py", "context.py", "logger.py", "registry.py"]:
+            if os.path.isdir(item_path):
+                shutil.rmtree(item_path)
+            else:
+                os.remove(item_path)
+
     if not os.path.exists(BACKEND_DIR):
         print(f"  ⚠️  Backend directory not found: {BACKEND_DIR}")
         return
