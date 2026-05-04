@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pywebapp-native"
-version = "2.0.5"
+version = "2.0.4"
 authors = [
   { name="Sonu Vishwakarma", email="sonuportfolio77@gmail.com" },
 ]
@@ -14,7 +14,6 @@ readme = "README.md"
 requires-python = ">=3.8"
 classifiers = [
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Intended Audience :: Developers",
     "Topic :: Software Development :: Libraries :: Application Frameworks",
