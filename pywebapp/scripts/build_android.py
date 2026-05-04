@@ -28,26 +28,33 @@ ANDROID_PYTHON_DIR = os.path.join(
 )
 ANDROID_DIR = os.path.join(PROJECT_ROOT, "android")
 
-# Files to sync from backend to Android
-SYNC_FILES = ["api.py", "handlers.py", "logger.py", "context.py", "registry.py"]
-
-
 def sync_python_files():
     """
-    Copy backend Python files to Android's python source directory.
+    Copy all backend Python files to Android's python source directory.
     Rewrites relative package imports to flat imports for Chaquopy compatibility.
     """
     print("\n📋 Syncing Python files to Android...")
 
     os.makedirs(ANDROID_PYTHON_DIR, exist_ok=True)
 
-    for filename in SYNC_FILES:
-        src = os.path.join(BACKEND_DIR, filename)
-        dst = os.path.join(ANDROID_PYTHON_DIR, filename)
+    if not os.path.exists(BACKEND_DIR):
+        print(f"  ⚠️  Backend directory not found: {BACKEND_DIR}")
+        return
 
-        if not os.path.exists(src):
-            print(f"  ⚠️  Skipping {filename} — not found in backend/")
-            continue
+    # Sync all .py files from the backend directory (recursive)
+    for root, dirs, files in os.walk(BACKEND_DIR):
+        for filename in files:
+            if not filename.endswith(".py"):
+                continue
+                
+            src = os.path.join(root, filename)
+            
+            # Calculate relative path to maintain structure
+            rel_path = os.path.relpath(src, BACKEND_DIR)
+            dst = os.path.join(ANDROID_PYTHON_DIR, rel_path)
+            
+            # Ensure destination directory exists
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
 
         with open(src, "r", encoding="utf-8") as f:
             content = f.read()

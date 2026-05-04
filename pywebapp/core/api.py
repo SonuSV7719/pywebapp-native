@@ -19,6 +19,7 @@ Usage:
 import json
 import importlib
 import traceback
+import pkgutil
 from typing import Any, Dict, List, Optional
 
 from pywebapp.core import context
@@ -33,27 +34,37 @@ _handlers_loaded = False
 
 def _discover_user_handlers():
     """
-    Dynamically import the user's handlers module to trigger @register decorators.
-    This allows the framework to discover user-defined functions without the user
-    needing to do anything beyond decorating their functions.
+    Dynamically discover and import all user handlers recursively.
+    Scans the 'backend' package and the 'handlers' module for @register decorators.
     """
     global _handlers_loaded
     if _handlers_loaded:
         return
 
-    # Try to import user's backend.handlers module
-    handler_modules = ["backend.handlers", "handlers"]
-    for module_name in handler_modules:
+    discovery_targets = ["backend", "handlers"]
+    
+    for target in discovery_targets:
         try:
-            importlib.import_module(module_name)
-            logger.info(f"Discovered user handlers from: {module_name}")
+            # 1. Import the root target
+            root_module = importlib.import_module(target)
+            logger.info(f"Discovered handler root: {target}")
             _handlers_loaded = True
-            return
+            
+            # 2. Recursively discover all sub-modules if it's a package
+            if hasattr(root_module, "__path__"):
+                for _, name, is_pkg in pkgutil.walk_packages(root_module.__path__, root_module.__name__ + "."):
+                    if not is_pkg:
+                        try:
+                            importlib.import_module(name)
+                            logger.debug(f"  Auto-imported sub-module: {name}")
+                        except Exception as e:
+                            logger.warning(f"  Failed to import {name}: {e}")
         except ImportError:
             continue
 
-    logger.warning("No user handlers found. Tried: backend.handlers, handlers")
-    _handlers_loaded = True
+    if not _handlers_loaded:
+        logger.warning("No handlers discovered automatically. Ensure your logic is in 'backend/' or 'handlers.py'.")
+        _handlers_loaded = True
 
 
 def set_context(data_json: str) -> None:
