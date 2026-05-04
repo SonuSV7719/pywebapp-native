@@ -63,13 +63,36 @@ def sync_python_files():
         content = re.sub(r"from \. import ([a-zA-Z0-9_]+ as [a-zA-Z0-9_]+)", r"import \1", content)
 
         # Rewrite pywebapp.core imports to flat imports for Chaquopy
-        # `from pywebapp.core import register` -> `from registry import register`
+        # This handles combined imports like `from pywebapp.core import register, get_logger`
+        # by splitting them into `from registry import register` and `from logger import get_logger`.
+        if "from pywebapp.core import" in content:
+            core_match = re.search(r"from pywebapp\.core import (.+)", content)
+            if core_match:
+                import_list = [i.strip() for i in core_match.group(1).split(",")]
+                flat_imports = []
+                for item in import_list:
+                    # Clean up any "as alias" parts for mapping
+                    base_item = item.split(" as ")[0].strip()
+                    
+                    if base_item in ["register", "method_registry"]:
+                        flat_imports.append(f"from registry import {item}")
+                    elif base_item in ["get_logger"]:
+                        flat_imports.append(f"from logger import {item}")
+                    elif base_item in ["get_context", "set_context", "_set_ctx", "_get_ctx"]:
+                        flat_imports.append(f"from context import {item}")
+                    elif base_item in ["dispatch", "dispatch_json", "list_methods", "get_schema"]:
+                        flat_imports.append(f"from api import {item}")
+                    else:
+                        # Fallback to registry if unknown
+                        flat_imports.append(f"from registry import {item}")
+                
+                content = content.replace(core_match.group(0), "\n".join(flat_imports))
+
+        # Also handle specific submodule imports
         content = re.sub(r"from pywebapp\.core\.registry import", "from registry import", content)
         content = re.sub(r"from pywebapp\.core\.logger import", "from logger import", content)
         content = re.sub(r"from pywebapp\.core\.context import", "from context import", content)
         content = re.sub(r"from pywebapp\.core\.api import", "from api import", content)
-        content = re.sub(r"from pywebapp\.core import context", "import context", content)
-        content = re.sub(r"from pywebapp\.core import", "from registry import", content)
 
         # Add header comment
         header = f'"""\nAndroid-side copy of backend/{filename}\nAuto-synced by pywebapp build — DO NOT EDIT DIRECTLY.\nSource of truth: backend/{filename}\n"""\n\n'
@@ -116,6 +139,9 @@ def _sync_core_files():
 
         # Rewrite imports for flat structure
         content = re.sub(r"from pywebapp\.core import context", "import context", content)
+        content = re.sub(r"from pywebapp\.core import api", "import api", content)
+        content = re.sub(r"from pywebapp\.core import logger", "import logger", content)
+        content = re.sub(r"from pywebapp\.core import registry", "import registry", content)
         content = re.sub(r"from pywebapp\.core\.", "from ", content)
         content = re.sub(r"from \.", "from ", content)
 
