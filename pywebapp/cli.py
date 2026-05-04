@@ -112,16 +112,31 @@ def dev_server():
     
     frontend_dir = os.path.join(os.getcwd(), 'frontend')
     # Start Vite in background (provides Hot Module Replacement)
-    subprocess.Popen(["npm", "run", "dev"], cwd=frontend_dir, shell=True)
+    # Using shell=True on Windows requires specific cleanup
+    vite_proc = subprocess.Popen(["npm", "run", "dev"], cwd=frontend_dir, shell=True)
     
-    # Give Vite a second to start
+    # Give Vite a moment to initialize
     import time
     time.sleep(2)
     
-    # Launch the Desktop window in Dev Mode using the package's runner
-    from pywebapp.scripts.run_desktop import main as run_desktop_main
-    sys.argv = [sys.argv[0], "--dev"]
-    run_desktop_main()
+    try:
+        # Launch the Desktop window in Dev Mode
+        from pywebapp.scripts.run_desktop import main as run_desktop_main
+        sys.argv = [sys.argv[0], "--dev"]
+        run_desktop_main()
+    except KeyboardInterrupt:
+        print("\n👋 Stopping development server...")
+    finally:
+        # 🧹 CLEANUP: Kill the background Vite process
+        print("🧹 Cleaning up background processes...")
+        if os.name == 'nt':
+            # On Windows, we need to kill the process tree because shell=True 
+            # creates a cmd.exe wrapper
+            subprocess.run(['taskkill', '/F', '/T', '/PID', str(vite_proc.pid)], 
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            vite_proc.terminate()
+        print("✅ Cleanup complete.")
 
 def main():
     from pywebapp import __version__
