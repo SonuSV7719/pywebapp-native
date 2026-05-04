@@ -68,6 +68,7 @@ def sync_python_files():
         content = re.sub(r"from pywebapp\.core\.logger import", "from logger import", content)
         content = re.sub(r"from pywebapp\.core\.context import", "from context import", content)
         content = re.sub(r"from pywebapp\.core\.api import", "from api import", content)
+        content = re.sub(r"from pywebapp\.core import context", "import context", content)
         content = re.sub(r"from pywebapp\.core import", "from registry import", content)
 
         # Add header comment
@@ -114,8 +115,9 @@ def _sync_core_files():
             content = f.read()
 
         # Rewrite imports for flat structure
-        content = re.sub(r"from \.", "from ", content)
+        content = re.sub(r"from pywebapp\.core import context", "import context", content)
         content = re.sub(r"from pywebapp\.core\.", "from ", content)
+        content = re.sub(r"from \.", "from ", content)
 
         with open(dst, "w", encoding="utf-8") as f:
             f.write(content)
