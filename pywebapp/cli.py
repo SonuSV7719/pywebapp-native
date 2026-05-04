@@ -14,6 +14,7 @@ def run_command(cmd, cwd=None, shell=True):
 
 def build_frontend():
     print("\n📦 Building Frontend...")
+    sync_app_config()
     frontend_dir = os.path.join(os.getcwd(), 'frontend')
     run_command("npm install", cwd=frontend_dir)
     run_command("npm run build", cwd=frontend_dir)
@@ -92,8 +93,17 @@ def init_project(name):
     except Exception as e:
         print(f"❌ Failed to create project: {e}")
 
+def sync_app_config():
+    try:
+        from pywebapp.scripts.sync_config import sync_config
+        sync_config()
+    except Exception as e:
+        print(f"⚠️ Warning: Could not sync pywebapp.json config: {e}")
+
 def dev_server():
     print("\n🚀 Launching Development Environment...")
+    sync_app_config()
+    
     frontend_dir = os.path.join(os.getcwd(), 'frontend')
     # Start Vite in background (provides Hot Module Replacement)
     subprocess.Popen(["npm", "run", "dev"], cwd=frontend_dir, shell=True)
