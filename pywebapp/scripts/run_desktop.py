@@ -25,13 +25,26 @@ def safe_print(msg):
         except Exception:
             pass
 
-# 🏛️ PATH FIX: Ensure we can find the 'backend' folder
-if hasattr(sys, '_MEIPASS'):
-    # We are running inside a PyInstaller EXE
-    PROJECT_ROOT = sys._MEIPASS
-else:
-    # We are running in development
-    PROJECT_ROOT = os.getcwd()
+# 🏛️ PATH FIX: Ensure we can find the project structure correctly
+def get_project_root():
+    if hasattr(sys, '_MEIPASS'):
+        return sys._MEIPASS
+    
+    # Search upwards for pywebapp.json starting from CWD
+    current = os.getcwd()
+    while current != os.path.dirname(current):
+        if os.path.exists(os.path.join(current, "pywebapp.json")):
+            return current
+        current = os.path.dirname(current)
+    return os.getcwd()
+
+PROJECT_ROOT = get_project_root()
+
+# 🛡️ SAFETY CHECK: Verify we are actually in a PyWebApp project
+if not os.path.exists(os.path.join(PROJECT_ROOT, "pywebapp.json")) and not hasattr(sys, '_MEIPASS'):
+    safe_print("❌ Error: Could not find 'pywebapp.json'.")
+    safe_print("   Please run this command from inside your PyWebApp project folder.")
+    sys.exit(1)
 
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
@@ -105,9 +118,9 @@ def main():
             safe_print("Error: Frontend build not found.")
             return
         
-        # Windows file path to URI fix (requires file:/// and forward slashes)
-        abs_path = os.path.abspath(index_html)
-        url = 'file:///' + abs_path.replace('\\', '/')
+        # Windows file path to URI fix (Using pathlib for 100% compliance)
+        from pathlib import Path
+        url = Path(index_html).absolute().as_uri()
 
     bridge = DesktopBridge()
     

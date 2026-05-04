@@ -20,8 +20,16 @@ import shutil
 import subprocess
 import sys
 
-# Resolve paths relative to user's project (cwd)
-PROJECT_ROOT = os.getcwd()
+# Resolve paths relative to user's project (Searching for pywebapp.json)
+def get_project_root():
+    current = os.getcwd()
+    while current != os.path.dirname(current):
+        if os.path.exists(os.path.join(current, "pywebapp.json")):
+            return current
+        current = os.path.dirname(current)
+    return os.getcwd()
+
+PROJECT_ROOT = get_project_root()
 BACKEND_DIR = os.path.join(PROJECT_ROOT, "backend")
 ANDROID_PYTHON_DIR = os.path.join(
     PROJECT_ROOT, "android", "app", "src", "main", "python"
