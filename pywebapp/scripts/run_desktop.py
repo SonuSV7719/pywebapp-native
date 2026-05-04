@@ -133,8 +133,9 @@ def main():
         height=800
     )
     
-    # Start the app
-    webview.start(debug=is_dev)
+    # Start the app with the internal HTTP server enabled (Native Universal Fix)
+    # This avoids file:// URI issues and provides a consistent local environment
+    webview.start(debug=is_dev, http_server=not is_dev)
 
 if __name__ == '__main__':
     main()
