@@ -124,14 +124,21 @@ def dev_server():
     run_desktop_main()
 
 def main():
+    from pywebapp import __version__
     parser = argparse.ArgumentParser(description="PyWebApp Framework CLI")
-    parser.add_argument('command', choices=['init', 'dev', 'build-android', 'build-desktop', 'build-linux', 'build-web'], 
+    parser.add_argument('--version', action='version', version=f'%(prog)s {__version__}')
+    parser.add_argument('command', nargs='?', choices=['init', 'dev', 'build-android', 'build-desktop', 'build-linux', 'build-web'], 
                         help='Command to execute')
     parser.add_argument('name', nargs='?', help='Project name for init command')
+    parser.add_argument('--password', help='Keystore password for build-android')
     
     args = parser.parse_args()
 
     try:
+        if not args.command:
+            parser.print_help()
+            return
+
         if args.command == 'init':
             if not args.name:
                 print("❌ Error: Please provide a project name. Usage: pywebapp init <name>")
@@ -145,10 +152,14 @@ def main():
         elif args.command == 'build-android':
             build_frontend()
             from pywebapp.scripts.build_android_release import main as release_main
+            sys.argv = [sys.argv[0]]
+            if args.password:
+                sys.argv.extend(["--password", args.password])
             release_main()
         elif args.command == 'build-desktop' or args.command == 'build-linux':
             build_frontend()
             from pywebapp.scripts.build_desktop import main as desktop_main
+            sys.argv = [sys.argv[0]]
             desktop_main()
         
         print(f"\n✨ {args.command.capitalize()} completed successfully!")
