@@ -69,10 +69,11 @@ def sync_python_files():
         with open(init_file, "w") as f:
             f.write("# Auto-generated package init\n")
 
-    # Sync all .py files from the backend directory (recursive)
+    # Sync Python and common data files from the backend directory (recursive)
+    allowed_exts = (".py", ".json", ".csv", ".txt", ".db", ".sqlite", ".xml", ".yaml", ".yml")
     for root, dirs, files in os.walk(BACKEND_DIR):
         for filename in files:
-            if not filename.endswith(".py"):
+            if not filename.lower().endswith(allowed_exts):
                 continue
                 
             src = os.path.join(root, filename)
@@ -84,54 +85,58 @@ def sync_python_files():
             # Ensure destination directory exists
             os.makedirs(os.path.dirname(dst), exist_ok=True)
 
-        with open(src, "r", encoding="utf-8") as f:
-            content = f.read()
+            if not filename.endswith(".py"):
+                # Simply copy non-python files (e.g. JSON, DB, CSV) directly
+                shutil.copy2(src, dst)
+                print(f"  ✅ {filename} → android/...python/backend/{filename}")
+                continue
 
-        # (Removed relative import flattening — we now preserve the backend folder structure!)
+            with open(src, "r", encoding="utf-8") as f:
+                content = f.read()
 
-        # Rewrite pywebapp.core imports to flat imports for Chaquopy
-        # This handles combined imports like `from pywebapp.core import register, get_logger`
-        # by splitting them into `from registry import register` and `from logger import get_logger`.
-        if "from pywebapp.core import" in content:
-            core_match = re.search(r"from pywebapp\.core import (.+)", content)
-            if core_match:
-                import_list = [i.strip() for i in core_match.group(1).split(",")]
-                flat_imports = []
-                for item in import_list:
-                    # Clean up any "as alias" parts for mapping
-                    base_item = item.split(" as ")[0].strip()
+            # Rewrite pywebapp.core imports to flat imports for Chaquopy
+            # This handles combined imports like `from pywebapp.core import register, get_logger`
+            # by splitting them into `from registry import register` and `from logger import get_logger`.
+            if "from pywebapp.core import" in content:
+                core_match = re.search(r"from pywebapp\.core import (.+)", content)
+                if core_match:
+                    import_list = [i.strip() for i in core_match.group(1).split(",")]
+                    flat_imports = []
+                    for item in import_list:
+                        # Clean up any "as alias" parts for mapping
+                        base_item = item.split(" as ")[0].strip()
+                        
+                        if base_item in ["register", "method_registry"]:
+                            flat_imports.append(f"from registry import {item}")
+                        elif base_item in ["get_logger"]:
+                            flat_imports.append(f"from logger import {item}")
+                        elif base_item in ["get_context", "set_context", "_set_ctx", "_get_ctx"]:
+                            flat_imports.append(f"from context import {item}")
+                        elif base_item in ["dispatch", "dispatch_json", "list_methods", "get_schema"]:
+                            flat_imports.append(f"from api import {item}")
+                        else:
+                            # Fallback to registry if unknown
+                            flat_imports.append(f"from registry import {item}")
                     
-                    if base_item in ["register", "method_registry"]:
-                        flat_imports.append(f"from registry import {item}")
-                    elif base_item in ["get_logger"]:
-                        flat_imports.append(f"from logger import {item}")
-                    elif base_item in ["get_context", "set_context", "_set_ctx", "_get_ctx"]:
-                        flat_imports.append(f"from context import {item}")
-                    elif base_item in ["dispatch", "dispatch_json", "list_methods", "get_schema"]:
-                        flat_imports.append(f"from api import {item}")
-                    else:
-                        # Fallback to registry if unknown
-                        flat_imports.append(f"from registry import {item}")
-                
-                content = content.replace(core_match.group(0), "\n".join(flat_imports))
+                    content = content.replace(core_match.group(0), "\n".join(flat_imports))
 
-        # Also handle specific submodule imports
-        content = re.sub(r"from pywebapp\.core\.registry import", "from registry import", content)
-        content = re.sub(r"from pywebapp\.core\.logger import", "from logger import", content)
-        content = re.sub(r"from pywebapp\.core\.context import", "from context import", content)
-        content = re.sub(r"from pywebapp\.core\.api import", "from api import", content)
+            # Also handle specific submodule imports
+            content = re.sub(r"from pywebapp\.core\.registry import", "from registry import", content)
+            content = re.sub(r"from pywebapp\.core\.logger import", "from logger import", content)
+            content = re.sub(r"from pywebapp\.core\.context import", "from context import", content)
+            content = re.sub(r"from pywebapp\.core\.api import", "from api import", content)
 
-        # Add header comment
-        header = f'"""\nAndroid-side copy of backend/{filename}\nAuto-synced by pywebapp build — DO NOT EDIT DIRECTLY.\nSource of truth: backend/{filename}\n"""\n\n'
+            # Add header comment
+            header = f'"""\nAndroid-side copy of backend/{filename}\nAuto-synced by pywebapp build — DO NOT EDIT DIRECTLY.\nSource of truth: backend/{filename}\n"""\n\n'
 
-        # Only add header if not already present
-        if "Auto-synced by pywebapp build" not in content:
-            content = header + content
+            # Only add header if not already present
+            if "Auto-synced by pywebapp build" not in content:
+                content = header + content
 
-        with open(dst, "w", encoding="utf-8") as f:
-            f.write(content)
+            with open(dst, "w", encoding="utf-8") as f:
+                f.write(content)
 
-        print(f"  ✅ {filename} → android/...python/{filename}")
+            print(f"  ✅ {filename} → android/...python/backend/{filename}")
 
     # Also sync the core framework files needed on Android
     _sync_core_files()
