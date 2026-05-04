@@ -21,9 +21,9 @@ import importlib
 import traceback
 from typing import Any, Dict, List, Optional
 
-from . import context
-from .logger import get_logger
-from .registry import method_registry
+from pywebapp.core import context
+from pywebapp.core.logger import get_logger
+from pywebapp.core.registry import method_registry
 
 logger = get_logger("api")
 

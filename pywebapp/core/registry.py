@@ -50,9 +50,9 @@ class MethodRegistry:
     """
 
     def __init__(self):
-        self._methods: Dict[str, Dict[str, Any]] = {}
-        self._middleware_pre: List[Callable] = []
-        self._middleware_post: List[Callable] = []
+        self._methods = {}  # type: Dict[str, Dict[str, Any]]
+        self._middleware_pre = []  # type: List[Callable]
+        self._middleware_post = []  # type: List[Callable]
 
     def register(
         self,

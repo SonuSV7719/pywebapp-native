@@ -5,7 +5,7 @@ Separated from api.py to avoid circular imports.
 """
 from typing import Any, Dict
 
-_context: Dict[str, Any] = {}
+_context = {}  # type: Dict[str, Any]
 
 def set_context(data: Dict[str, Any]) -> None:
     """Set the global context."""
