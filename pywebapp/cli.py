@@ -7,6 +7,13 @@ import os
 import sys
 import subprocess
 import argparse
+import shutil
+import stat
+
+def remove_readonly(func, path, _):
+    "Clear the readonly bit and reattempt the file removal"
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
 
 def run_command(cmd, cwd=None, shell=True):
     print(f"🛠️ Executing: {' '.join(cmd) if isinstance(cmd, list) else cmd}")
@@ -27,14 +34,13 @@ def init_project(name):
         
         # Cleanup unnecessary folders and files
         project_path = os.path.join(os.getcwd(), name)
-        folders_to_remove = ['docs', 'tests', 'pywebapp', 'packages']
-        files_to_remove = ['master_build.py', 'pyproject.toml', 'PyWebApp.spec']
+        folders_to_remove = ['docs', 'tests', 'packages', '.github', 'build', 'dist']
+        files_to_remove = ['pyproject.toml', 'PyWebApp.spec', 'PyWebApp Native.spec', 'LICENSE', 'requirements.txt', 'master_build.py']
         
-        import shutil
         for folder in folders_to_remove:
             path = os.path.join(project_path, folder)
             if os.path.exists(path):
-                shutil.rmtree(path)
+                shutil.rmtree(path, onerror=remove_readonly)
                 print(f"🧹 Removed folder: {folder}/")
 
         for file in files_to_remove:
@@ -46,7 +52,7 @@ def init_project(name):
         # Remove egg-info if they exist
         for item in os.listdir(project_path):
             if item.endswith('.egg-info'):
-                shutil.rmtree(os.path.join(project_path, item))
+                shutil.rmtree(os.path.join(project_path, item), onerror=remove_readonly)
                 print(f"🧹 Removed {item}/")
 
         # Remove framework-only files from backend (keep only handlers.py)
@@ -62,7 +68,7 @@ def init_project(name):
         for folder in ['desktop', 'scripts']:
             path = os.path.join(project_path, folder)
             if os.path.exists(path):
-                shutil.rmtree(path)
+                shutil.rmtree(path, onerror=remove_readonly)
                 print(f"🧹 Removed {folder}/ (now in pip package)")
 
         # Remove frontend/src/bridge.js (now in npm package)
@@ -84,7 +90,7 @@ def init_project(name):
         # Fresh start: Re-initialize Git to remove framework history
         git_path = os.path.join(project_path, ".git")
         if os.path.exists(git_path):
-            shutil.rmtree(git_path)
+            shutil.rmtree(git_path, onerror=remove_readonly)
             subprocess.run(["git", "init"], cwd=project_path, check=True)
             print("✨ Git re-initialized for a fresh start.")
 
