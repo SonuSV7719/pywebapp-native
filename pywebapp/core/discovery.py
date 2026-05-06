@@ -35,6 +35,31 @@ def _find_project_root() -> str:
     return os.getcwd()
 
 
+def _find_backend_path() -> str:
+    """
+    Find the backend/ directory across all platforms.
+    
+    Strategy (in priority order):
+      1. Check project_root/backend/ (Desktop, Web — normal development)
+      2. Check sys.path entries for backend/ (Android — files pushed via ADB)
+      3. Fall back to os.getcwd()/backend/
+    """
+    # 1. Standard: project root (anchored by pywebapp.json)
+    project_root = os.path.abspath(os.path.normpath(_find_project_root()))
+    candidate = os.path.join(project_root, "backend")
+    if os.path.isdir(candidate):
+        return candidate
+    
+    # 2. Android/Chaquopy: search sys.path for a directory containing backend/
+    for path_entry in sys.path:
+        candidate = os.path.join(path_entry, "backend")
+        if os.path.isdir(candidate) and os.path.exists(os.path.join(candidate, "handlers.py")):
+            return candidate
+    
+    # 3. Fallback
+    return os.path.join(project_root, "backend")
+
+
 def discover_handlers() -> bool:
     """
     Discover and import all user handlers from the backend/ package.
@@ -48,8 +73,7 @@ def discover_handlers() -> bool:
     if _discovered:
         return True
 
-    project_root = os.path.abspath(os.path.normpath(_find_project_root()))
-    backend_path = os.path.join(project_root, "backend")
+    backend_path = _find_backend_path()
 
     if not os.path.isdir(backend_path):
         # Also try legacy "handlers" module (single-file projects)
