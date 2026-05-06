@@ -125,15 +125,40 @@ def main():
         url = f"http://localhost:{port}"
         safe_print(f"📡 Internal server started at {url}")
 
+    # 🏷️ Load Configuration from pywebapp.json (single read)
+    config_path = os.path.join(PROJECT_ROOT, "pywebapp.json")
+    app_name = "PyWebApp Desktop"
+    icon_path = None
+    width = 1200
+    height = 800
+    
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r") as f:
+                config = json.load(f)
+                
+                # Branding
+                desktop_config = config.get("desktop", {})
+                app_name = desktop_config.get("app_name", config.get("app_name", app_name))
+                icon_rel = config.get("icon_path")
+                if icon_rel:
+                    icon_path = os.path.join(PROJECT_ROOT, icon_rel)
+                
+                # Window dimensions (desktop block → global → default)
+                width = desktop_config.get("window_width", config.get("window_width", width))
+                height = desktop_config.get("window_height", config.get("window_height", height))
+        except Exception:
+            pass
+
     bridge = DesktopBridge()
     
-    safe_print("🚀 Launching PyWebApp Desktop...")
+    safe_print(f"🚀 Launching {app_name} ({width}x{height})...")
     window = webview.create_window(
-        'PyWebApp Desktop', 
+        app_name, 
         url=url,
         js_api=bridge,
-        width=1200,
-        height=800
+        width=width,
+        height=height
     )
     
     # Start the app (no http_server flag needed — we run our own)

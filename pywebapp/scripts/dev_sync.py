@@ -30,6 +30,10 @@ import subprocess
 import sys
 import time
 import threading
+import hashlib
+
+# Import build scripts for branding sync
+from pywebapp.scripts.build_android import sync_app_icons, sync_app_name
 
 PROJECT_ROOT = os.getcwd()
 BACKEND_DIR = os.path.join(PROJECT_ROOT, "backend")
@@ -44,9 +48,13 @@ SYNC_FILES = ["registry.py", "api.py", "handlers.py", "logger.py", "__init__.py"
 DEBOUNCE_SECONDS = 0.5
 
 
+# 🔧 P2: Shared utilities (consolidated from duplicate definitions)
+from pywebapp.scripts.utils import get_android_tool, handle_no_devices
+
 def run_adb(args, device=None):
     """Run an ADB command and return (success, output)."""
-    cmd = ["adb"]
+    adb_cmd = get_android_tool("adb")
+    cmd = [adb_cmd]
     if device:
         cmd += ["-s", device]
     cmd += args
@@ -61,7 +69,7 @@ def run_adb(args, device=None):
 
 
 def check_adb_connection(device=None):
-    """Check if ADB is available and a device is connected."""
+    """Check if ADB is available and a device is connected. Prompt to start emulator if none."""
     success, output = run_adb(["devices"], device)
     if not success:
         print("❌ ADB not found. Make sure Android SDK platform-tools is in PATH.")
@@ -71,9 +79,8 @@ def check_adb_connection(device=None):
     connected = [l for l in lines[1:] if 'device' in l and 'offline' not in l]
 
     if not connected:
-        print("❌ No Android device/emulator connected.")
-        print("   Start an emulator or connect a device via USB.")
-        return False
+        print("\n❌ No Android device/emulator connected.")
+        return handle_no_devices()
 
     print(f"✅ Connected devices: {len(connected)}")
     for line in connected:
@@ -81,48 +88,63 @@ def check_adb_connection(device=None):
     return True
 
 
-def push_python_files(device=None, rewrite_imports=True):
-    """Push backend Python files to the device."""
-    # Create target directory on device
-    run_adb(["shell", "mkdir", "-p", DEVICE_PYTHON_DIR], device)
+def push_framework_files(device=None):
+    """Push the pywebapp framework's own core files to the device."""
+    import pywebapp
+    framework_dir = os.path.dirname(pywebapp.__file__)
+    
+    # 🚀 Total Sync: Push everything inside the pywebapp package folder
+    # This includes core, scripts, plugins, and __init__.py
+    for item in os.listdir(framework_dir):
+        # Skip pycache and temp files
+        if item.startswith("__pycache__") or item.endswith(".pyc") or item.startswith("."):
+            continue
+            
+        src_item = os.path.join(framework_dir, item)
+        dst_item = f"{DEVICE_PYTHON_DIR}/pywebapp/{item}"
+        
+        if os.path.isdir(src_item):
+            # Check if it's a python package (has __init__.py)
+            if os.path.exists(os.path.join(src_item, "__init__.py")):
+                run_adb(["shell", "mkdir", "-p", dst_item], device)
+                run_adb(["push", src_item + "/.", dst_item], device)
+        elif item == "__init__.py":
+            run_adb(["push", src_item, dst_item], device)
+    
+    print("  ✅ Framework All-Modules Synced")
+
+
+def push_python_files(device=None):
+    """Push backend Python files to the device recursively."""
+    # First, ensure framework is up to date on device
+    push_framework_files(device)
 
     pushed = []
-    for filename in SYNC_FILES:
-        src = os.path.join(BACKEND_DIR, filename)
-        if not os.path.exists(src):
-            continue
+    # Sync all files from backend/ maintaining structure
+    for root, dirs, files in os.walk(BACKEND_DIR):
+        # ⚡ Auto-Package: Ensure every sub-folder has an __init__.py on device
+        rel_root = os.path.relpath(root, BACKEND_DIR)
+        dst_root = f"{DEVICE_PYTHON_DIR}/backend/{rel_root.replace(os.sep, '/')}"
+        run_adb(["shell", "mkdir", "-p", dst_root], device)
+        
+        init_file = f"{dst_root}/__init__.py"
+        # We check if it exists on device (cheaper to just push if small)
+        run_adb(["shell", f"echo '# Auto-generated' > {init_file}"], device)
 
-        dst = f"{DEVICE_PYTHON_DIR}/{filename}"
-
-        if rewrite_imports:
-            # Read, rewrite imports, push via stdin
-            with open(src, "r", encoding="utf-8") as f:
-                content = f.read()
-
-            # Rewrite relative imports for flat structure
-            content = re.sub(r"from \.", "from ", content)
-
-            # Rewrite pywebapp.core imports
-            content = re.sub(r"from pywebapp\.core\.", "from ", content)
-            content = re.sub(r"from pywebapp\.core import", "from registry import", content)
-
-            # Write to temp file, then push
-            temp_dir = os.path.join(PROJECT_ROOT, ".pywebapp_tmp")
-            os.makedirs(temp_dir, exist_ok=True)
-            temp_path = os.path.join(temp_dir, f".tmp_{filename}")
-            with open(temp_path, "w", encoding="utf-8") as f:
-                f.write(content)
-
-            success, output = run_adb(["push", temp_path, dst], device)
-            os.remove(temp_path)
-        else:
-            success, output = run_adb(["push", src, dst], device)
-
-        if success:
-            pushed.append(filename)
-            print(f"  📦 {filename} → {dst}")
-        else:
-            print(f"  ❌ Failed to push {filename}: {output}")
+        for f in files:
+            # Sync .py and common data files
+            if f.endswith((".py", ".json", ".csv", ".db", ".sqlite")):
+                src = os.path.join(root, f)
+                rel_path = os.path.relpath(src, BACKEND_DIR)
+                dst = f"{DEVICE_PYTHON_DIR}/backend/{rel_path.replace(os.sep, '/')}"
+                
+                # Direct push
+                success, output = run_adb(["push", src, dst], device)
+                if success:
+                    pushed.append(rel_path)
+                    print(f"  📦 {rel_path} → {dst}")
+                else:
+                    print(f"  ❌ Failed to push {rel_path}: {output}")
 
     return pushed
 
@@ -132,11 +154,15 @@ def trigger_reload(device=None):
     Trigger Python module reload on the running app.
     Sends a broadcast intent that the app's DevReceiver picks up.
     """
+    # 🔒 P1: Use dynamic package name instead of hardcoded com.example.pywebapp
+    base_id, suffix = get_package_name()
+    package = f"{base_id}{suffix}"
+    
     success, output = run_adb(
         [
             "shell", "am", "broadcast",
-            "-a", "com.example.pywebapp.RELOAD_PYTHON",
-            "-n", "com.example.pywebapp/.dev.DevReloadReceiver",
+            "-a", f"{base_id}.RELOAD_PYTHON",
+            "-n", f"{package}/{base_id}.dev.DevReloadReceiver",
         ],
         device,
     )
@@ -144,6 +170,53 @@ def trigger_reload(device=None):
         print("  🔄 Reload signal sent to app")
     else:
         print(f"  ⚠️  Reload signal failed (app may not be in dev mode): {output}")
+
+
+def get_package_name():
+    """Parse build.gradle.kts to find the real applicationId and suffix."""
+    gradle_path = os.path.join(PROJECT_ROOT, "android", "app", "build.gradle.kts")
+    base_id = "com.example.pywebapp"
+    suffix = ""
+    
+    if os.path.exists(gradle_path):
+        try:
+            with open(gradle_path, "r", encoding="utf-8") as f:
+                content = f.read()
+                # Find applicationId = "..."
+                id_match = re.search(r'applicationId\s*=\s*"([^"]+)"', content)
+                if id_match:
+                    base_id = id_match.group(1)
+                
+                # Find applicationIdSuffix = "..."
+                suffix_match = re.search(r'applicationIdSuffix\s*=\s*"([^"]+)"', content)
+                if suffix_match:
+                    suffix = suffix_match.group(1)
+        except Exception:
+            pass
+            
+    return base_id, suffix
+
+def launch_app(device=None):
+    """Launch the app on the device/emulator. Installs if missing."""
+    base_id, suffix = get_package_name()
+    package = f"{base_id}{suffix}"
+    
+    # 🔍 Check if app is installed
+    _, output = run_adb(["shell", "pm", "list", "packages", package], device)
+    if package not in output:
+        print(f"\n⚠️  App '{package}' not found on device.")
+        print("🔨 Starting automated build and installation...")
+        from pywebapp.scripts.build_android import build_apk, install_apk
+        build_apk()
+        if not install_apk(device):
+            print("❌ Automated installation failed. Please check your Android setup.")
+            return
+
+    # 🚀 Launch using Package ID / Full Class Name
+    # We use the base_id for the class path
+    activity = f"{package}/{base_id}.MainActivity"
+    print(f"🚀 Launching app: {package}...")
+    run_adb(["shell", "am", "start", "-n", activity], device)
 
 
 def push_and_reload(device=None):
@@ -173,7 +246,20 @@ def watch_and_sync(device=None):
 
     class SyncHandler(FileSystemEventHandler):
         def on_modified(self, event):
-            if event.is_directory or not event.src_path.endswith('.py'):
+            if event.is_directory:
+                return
+                
+            filename = os.path.basename(event.src_path)
+            
+            # 🏷️ Handle Branding Sync (pywebapp.json)
+            if filename == "pywebapp.json":
+                print(f"\n⚙️  Config change detected — syncing branding...")
+                sync_app_name()
+                sync_app_icons()
+                return
+
+            # 🐍 Handle Python Sync
+            if not event.src_path.endswith('.py'):
                 return
 
             nonlocal debounce_timer
@@ -189,7 +275,9 @@ def watch_and_sync(device=None):
                 debounce_timer.start()
 
     observer = Observer()
+    # Watch both backend/ and PROJECT_ROOT (for pywebapp.json)
     observer.schedule(SyncHandler(), BACKEND_DIR, recursive=True)
+    observer.schedule(SyncHandler(), PROJECT_ROOT, recursive=False)
     observer.start()
 
     print(f"\n🔥 Dev Sync active — watching: {BACKEND_DIR}")
@@ -267,9 +355,16 @@ def main():
         # Initial push + watch
         print("\n📦 Initial push...")
         push_python_files(args.device)
+        
+        # Initial branding sync
+        sync_app_name()
+        sync_app_icons()
 
         # Setup ADB reverse by default
         setup_adb_reverse(args.port, args.device)
+
+        # 🚀 Auto-launch the app
+        launch_app(args.device)
 
         # Start watching
         watch_and_sync(args.device)

@@ -15,6 +15,8 @@ Steps:
 import argparse
 import os
 import shutil
+import re
+import time
 import subprocess
 import sys
 
@@ -84,6 +86,74 @@ def main():
         # Copy new build
         shutil.copytree(DIST_DIR, ANDROID_ASSETS_DIR)
         print("✅ Copied to Android assets")
+
+    # Step 4: Sync Web Icon
+    _sync_web_icon()
+
+def _sync_web_icon():
+    """Copy the app icon to dist/ and inject it into index.html."""
+    import json
+    config_path = os.path.join(PROJECT_ROOT, "pywebapp.json")
+    if not os.path.exists(config_path):
+        return
+
+    try:
+        with open(config_path, "r") as f:
+            config = json.load(f)
+            icon_rel_path = config.get("icon_path")
+            app_name = config.get("app_name")
+    except Exception:
+        return
+
+    if not icon_rel_path:
+        return
+
+    icon_src = os.path.join(PROJECT_ROOT, icon_rel_path)
+    if not os.path.exists(icon_src):
+        return
+
+    print(f"\n🌐 Syncing Web Icon: {icon_rel_path}...")
+    
+    # 1. Copy to dist
+    icon_ext = os.path.splitext(icon_rel_path)[1]
+    shutil.copy2(icon_src, os.path.join(DIST_DIR, f"favicon{icon_ext}"))
+    
+    # 2. ⚡ Sync to frontend/public for Dev Mode (Vite)
+    public_dir = os.path.join(FRONTEND_DIR, "public")
+    if os.path.exists(public_dir):
+        shutil.copy2(icon_src, os.path.join(public_dir, f"favicon{icon_ext}"))
+
+    # 3. Inject into index.html (both dist and source)
+    target_files = [
+        os.path.join(DIST_DIR, "index.html"),
+        os.path.join(FRONTEND_DIR, "index.html")
+    ]
+    
+    now = int(time.time())
+    for index_path in target_files:
+        if os.path.exists(index_path):
+            with open(index_path, "r", encoding="utf-8") as f:
+                html = f.read()
+            
+            # 🧪 Sync Icon with Cache Buster
+            if 'rel="icon"' not in html:
+                icon_tag = f'\n    <link rel="icon" type="image/png" href="favicon{icon_ext}?v={now}">'
+                html = html.replace('</head>', f'{icon_tag}\n</head>')
+            else:
+                html = re.sub(r'href="favicon.*?\?v=\d+"', f'href="favicon{icon_ext}?v={now}"', html)
+            
+            # 🏷️ Sync App Name (Title)
+            if app_name:
+                if '<title>' in html:
+                    html = re.sub(r'<title>.*?</title>', f'<title>{app_name}</title>', html)
+                else:
+                    title_tag = f'\n    <title>{app_name}</title>'
+                    html = html.replace('</head>', f'{title_tag}\n</head>')
+
+            with open(index_path, "w", encoding="utf-8") as f:
+                f.write(html)
+        
+    print(f"✅ Web assets (Dev & Prod) synced")
 
 
 if __name__ == "__main__":

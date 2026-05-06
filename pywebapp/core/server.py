@@ -29,7 +29,7 @@ import socket
 import sys
 import threading
 import atexit
-from typing import Tuple
+from typing import Tuple, Optional
 
 from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_cors import CORS
@@ -40,10 +40,32 @@ _get_schema = None
 _list_methods = None
 
 
+def _find_project_root():
+    """Search upwards for pywebapp.json to find the project anchor."""
+    curr = os.getcwd()
+    while curr != os.path.dirname(curr):
+        if os.path.exists(os.path.join(curr, "pywebapp.json")):
+            return curr
+        curr = os.path.dirname(curr)
+    return os.getcwd()
+
+def _auto_load_handlers():
+    """
+    Discover and import all user handlers.
+    Delegates to the centralized discovery engine.
+    """
+    from pywebapp.core.discovery import discover_handlers
+    discover_handlers()
+
+
 def _ensure_api_loaded():
-    """Lazily import the dispatch functions to avoid circular imports."""
+    """Lazily import the dispatch functions and auto-load handlers."""
     global _dispatch, _get_schema, _list_methods
     if _dispatch is None:
+        # First, load all user code
+        _auto_load_handlers()
+        
+        # Then, import the dispatcher
         from pywebapp.core.api import dispatch, get_schema, list_methods
         _dispatch = dispatch
         _get_schema = get_schema
@@ -84,8 +106,12 @@ def create_app(static_dir: str) -> Flask:
     log = logging.getLogger("werkzeug")
     log.setLevel(logging.WARNING)
 
-    # Enable CORS for all origins (safe — server is localhost only)
-    CORS(app)
+    # 🔒 Security: Restrict CORS to localhost origins only
+    CORS(app, origins=[
+        "http://localhost:*",
+        "http://127.0.0.1:*",
+        "http://[::1]:*",
+    ])
 
     # ── API Routes ────────────────────────────────────────────────────────
 
@@ -228,38 +254,33 @@ def start_server(
 
 
 def start_server_blocking(
-    static_dir: str,
+    static_dir: Optional[str] = None,
     port: int = 18090,
     host: str = "127.0.0.1",
 ):
     """
     Start the PyWebApp server in the foreground (blocking).
-
-    Used by `pywebapp serve` — blocks until Ctrl+C.
-
-    Args:
-        static_dir: Path to the frontend/dist directory.
-        port: Port to bind to. Default is 18090.
-        host: Host to bind to. Default is localhost only.
     """
-    # Validate static dir
-    index_html = os.path.join(static_dir, "index.html")
-    if not os.path.isfile(index_html):
-        print(f"❌ Error: Frontend build not found at: {static_dir}")
-        print("   Run 'pywebapp build-web' first to build the frontend.")
-        sys.exit(1)
+    # Validate static dir if provided
+    if static_dir:
+        index_html = os.path.join(static_dir, "index.html")
+        if not os.path.isfile(index_html):
+            print(f"⚠️  Warning: Frontend build not found at: {static_dir}")
+            print("   Static file serving will be disabled. API remains active.")
+    else:
+        print("💡 API-Only Mode: No static directory provided.")
 
-    # Eagerly load handlers so we can show registered methods
+    # Eagerly load handlers
     _ensure_api_loaded()
     methods = _list_methods()
 
-    print(f"\n🚀 PyWebApp Server running at http://{host}:{port}")
+    print(f"\n🚀 PyWebApp API Server running at http://{host}:{port}")
     print(f"📡 API endpoint: http://{host}:{port}/api/dispatch")
     print(f"💊 Health check: http://{host}:{port}/api/health")
     print(f"📋 Registered methods: {', '.join(methods.keys()) if methods else '(none)'}")
     print(f"\n   Press Ctrl+C to stop.\n")
 
-    app = create_app(static_dir)
+    app = create_app(static_dir or os.getcwd())
 
     try:
         app.run(host=host, port=port, debug=False, use_reloader=False)

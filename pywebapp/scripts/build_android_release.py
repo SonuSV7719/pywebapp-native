@@ -17,7 +17,7 @@ import os
 import subprocess
 import sys
 import string
-import random
+import secrets
 
 PROJECT_ROOT = os.getcwd()
 ANDROID_DIR = os.path.join(PROJECT_ROOT, "android")
@@ -57,9 +57,10 @@ def update_android_branding():
             f.write(new_content)
 
 def generate_random_password(length=16):
-    """Generate a random secure password."""
-    chars = string.ascii_letters + string.digits
-    return ''.join(random.choice(chars) for _ in range(length))
+    """Generate a cryptographically secure password for keystore signing."""
+    # 🔒 P0 Security: Use secrets module (CSPRNG) instead of random (Mersenne Twister)
+    chars = string.ascii_letters + string.digits + "!@#$%&*"
+    return ''.join(secrets.choice(chars) for _ in range(length))
 
 def find_keytool():
     """Attempt to find keytool in common locations."""
@@ -110,9 +111,11 @@ def setup_keystore(password):
     else:
         print(f"✅ {PROPERTIES_FILE} already exists.")
 
-def build_apk():
+def build_apk(clean=False):
     """Run Gradle to build the release APK."""
     print("\n📦 Building Signed Release APK via Gradle...")
+    if clean:
+        print("🧼 Performing clean build...")
     
     is_windows = sys.platform.startswith('win')
     gradlew = "gradlew.bat" if is_windows else "./gradlew"
@@ -120,34 +123,33 @@ def build_apk():
 
     if not os.path.exists(gradle_path):
         print("\n❌ Build failed: Gradle Wrapper not found!")
-        print(f"Missing file: {gradle_path}")
-        print("\n🛠️  HOW TO FIX:")
-        print("1. Open Android Studio.")
-        print('2. Click "Open" and select the "android" folder inside this project.')
-        print("3. Wait 10 seconds for Gradle Sync to finish.")
-        print("4. Android Studio will automatically generate 'gradlew.bat'.")
-        print("5. Run this script again.")
         sys.exit(1)
     
-    cmd = [gradle_path, "assembleRelease"]
-    
-    result = subprocess.run(cmd, cwd=ANDROID_DIR)
+    tasks = ["assembleRelease"]
+    if clean:
+        tasks.insert(0, "clean")
+        
+    result = subprocess.run([gradle_path] + tasks, cwd=ANDROID_DIR)
     if result.returncode != 0:
         print("\n❌ APK Build failed.")
         sys.exit(result.returncode)
         
-    apk_path = os.path.join(ANDROID_DIR, "app", "build", "outputs", "apk", "release", "app-release.apk")
-    print(f"\n✅ Build complete! Signed APK is available at:\n👉 {apk_path}")
-
 def main():
     parser = argparse.ArgumentParser(description="Build signed Android APK")
-    parser.add_argument("--password", help="Password for keystore generation (auto-generated if omitted)")
+    parser.add_argument("--password", help="Password for keystore generation")
+    parser.add_argument("--clean", action="store_true", help="Perform clean build")
+    parser.add_argument("--install", action="store_true", help="Install APK after build")
     args = parser.parse_args()
 
     # Step 1: Ensure frontend & backend are synced
     print("🔄 Syncing Python & Frontend files...")
-    from pywebapp.scripts.build_android import main as sync_main
+    from pywebapp.scripts.build_android import main as sync_main, install_apk as smart_install
+    # We pass --sync-only to the debug script to just handle files
+    import sys as pysys
+    old_argv = pysys.argv
+    pysys.argv = [pysys.argv[0], "--sync-only", "--skip-frontend"]
     sync_main()
+    pysys.argv = old_argv
 
     # Step 1.5: Update Branding (Name & Icon)
     update_android_branding()
@@ -157,7 +159,11 @@ def main():
     setup_keystore(password)
 
     # Step 4: Gradle Build
-    build_apk()
+    apk_path = build_apk(clean=args.clean)
+    
+    # Step 5: Smart Install
+    if args.install:
+        smart_install()
 
 if __name__ == "__main__":
     main()

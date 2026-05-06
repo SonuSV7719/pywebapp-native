@@ -3,14 +3,14 @@ PyWebApp Core — The engine behind the framework.
 
 Public API:
     from pywebapp.core import register, get_logger, dispatch, dispatch_json
-
+    
 All framework users need is the @register decorator to expose their functions.
 """
 
 from .registry import method_registry, register
-from .api import dispatch, dispatch_json, set_context, get_context, list_methods, get_schema
+from .api import dispatch, dispatch_json, list_methods, get_schema, hide_splash
+from .context import get_context, set_context
 from .logger import get_logger
-from .context import set_context as _set_ctx, get_context as _get_ctx
 
 __all__ = [
     "method_registry",
@@ -22,4 +22,5 @@ __all__ = [
     "list_methods",
     "get_schema",
     "get_logger",
+    "hide_splash",
 ]

@@ -106,32 +106,76 @@ def sync_app_config():
     except Exception as e:
         print(f"⚠️ Warning: Could not sync pywebapp.json config: {e}")
 
-def dev_server():
-    print("\n🚀 Launching Development Environment...")
+def dev_server(mode="desktop", port=5173):
     sync_app_config()
-    
     frontend_dir = os.path.join(os.getcwd(), 'frontend')
+
+    if mode == "android":
+        print("\n🤖 Preparing Android Dev Environment...")
+        
+        # 1. 🧼 ALWAYS perform a clean build and install first (per user request)
+        print("  🔨 Building fresh Debug APK (Clean)...")
+        from pywebapp.scripts.build_android import main as build_main
+        original_argv = sys.argv.copy()
+        sys.argv = [original_argv[0], "--clean", "--install"]
+        build_main()
+        
+        # 2. 🔄 Now start the live sync engine
+        print("\n🚀 Launching Android Dev Sync (Hot Reload)...")
+        from pywebapp.scripts.dev_sync import main as dev_sync_main
+        sys.argv = [original_argv[0], "--port", str(port), "--setup-reverse"]
+        dev_sync_main()
+        return
+
+    if mode == "web":
+        print(f"\n🌐 Launching Web Dev Environment (Port {port})...")
+        # 🔗 Pass the backend port to Vite via environment variable
+        env = os.environ.copy()
+        env["PYWEBAPP_API_PORT"] = "18090" # This matches the backend
+        
+        vite_proc = subprocess.Popen(
+            ["npm", "run", "dev", "--", "--port", str(port)], 
+            cwd=frontend_dir, 
+            shell=True,
+            env=env
+        )
+        
+        try:
+            # Start Python API server for backend
+            print("🐍 Starting Python API server...")
+            if os.getcwd() not in sys.path:
+                sys.path.insert(0, os.getcwd())
+            from pywebapp.core.server import start_server_blocking
+            # In web dev mode, we only need the API (Vite handles static files)
+            start_server_blocking(port=18090) 
+        except KeyboardInterrupt:
+            print("\n👋 Stopping web dev server...")
+        finally:
+            print("🧹 Cleaning up background processes...")
+            if os.name == 'nt':
+                subprocess.run(['taskkill', '/F', '/T', '/PID', str(vite_proc.pid)], 
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                vite_proc.terminate()
+        return
+
+    # Default: Desktop Mode
+    print("\n🚀 Launching Desktop Development Environment...")
     # Start Vite in background (provides Hot Module Replacement)
-    # Using shell=True on Windows requires specific cleanup
-    vite_proc = subprocess.Popen(["npm", "run", "dev"], cwd=frontend_dir, shell=True)
+    vite_proc = subprocess.Popen(["npm", "run", "dev", "--", "--port", str(port)], cwd=frontend_dir, shell=True)
     
-    # Give Vite a moment to initialize
     import time
     time.sleep(2)
     
     try:
-        # Launch the Desktop window in Dev Mode
         from pywebapp.scripts.run_desktop import main as run_desktop_main
         sys.argv = [sys.argv[0], "--dev"]
         run_desktop_main()
     except KeyboardInterrupt:
         print("\n👋 Stopping development server...")
     finally:
-        # 🧹 CLEANUP: Kill the background Vite process
         print("🧹 Cleaning up background processes...")
         if os.name == 'nt':
-            # On Windows, we need to kill the process tree because shell=True 
-            # creates a cmd.exe wrapper
             subprocess.run(['taskkill', '/F', '/T', '/PID', str(vite_proc.pid)], 
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         else:
@@ -146,7 +190,13 @@ def main():
                         help='Command to execute')
     parser.add_argument('name', nargs='?', help='Project name for init command')
     parser.add_argument('--password', help='Keystore password for build-android')
-    parser.add_argument('--port', type=int, default=18090, help='Port for serve command (default: 18090)')
+    parser.add_argument('--port', type=int, default=5173, help='Port for dev/serve command (default: 5173)')
+    parser.add_argument('--android', action='store_true', help='Run in Android dev mode')
+    parser.add_argument('--desktop', action='store_true', help='Run in Desktop dev mode')
+    parser.add_argument('--web', action='store_true', help='Run in Web dev mode')
+    parser.add_argument('--clean', action='store_true', help='Perform clean build (Android)')
+    parser.add_argument('--install', action='store_true', help='Install APK to device after build (Android)')
+    parser.add_argument('--debug', action='store_true', help='Build debug APK instead of release (Android)')
     
     args = parser.parse_args()
 
@@ -161,7 +211,29 @@ def main():
                 return
             init_project(args.name)
         elif args.command == 'dev':
-            dev_server()
+            mode = None
+            if args.android: mode = "android"
+            elif args.desktop: mode = "desktop"
+            elif args.web: mode = "web"
+            
+            if mode is None:
+                print("\n📱 PyWebApp Dev Menu")
+                print("-" * 25)
+                print("  [a] Android (Hot Reload)")
+                print("  [d] Desktop (Windows/Linux Window)")
+                print("  [w] Web (Browser Only)")
+                print("  [q] Quit")
+                
+                choice = input("\n👉 Select mode: ").lower().strip()
+                if choice == 'a': mode = "android"
+                elif choice == 'd': mode = "desktop"
+                elif choice == 'w': mode = "web"
+                elif choice == 'q': return
+                else:
+                    print("⚠️ Invalid choice. Defaulting to Desktop...")
+                    mode = "desktop"
+            
+            dev_server(mode=mode, port=args.port)
         elif args.command == 'build-web':
             build_frontend()
             print("\n🌐 Web build complete! Folder: frontend/dist")
@@ -174,11 +246,23 @@ def main():
             start_server_blocking(frontend_dist, port=args.port)
         elif args.command == 'build-android':
             build_frontend()
-            from pywebapp.scripts.build_android_release import main as release_main
-            sys.argv = [sys.argv[0]]
-            if args.password:
-                sys.argv.extend(["--password", args.password])
-            release_main()
+            
+            if args.debug:
+                # Force Debug Build
+                from pywebapp.scripts.build_android import main as debug_main
+                sys.argv = [sys.argv[0]]
+                if args.clean: sys.argv.append("--clean")
+                if args.install: sys.argv.append("--install")
+                debug_main()
+            else:
+                # Default to Release Build
+                from pywebapp.scripts.build_android_release import main as release_main
+                sys.argv = [sys.argv[0]]
+                if args.clean: sys.argv.append("--clean")
+                if args.install: sys.argv.append("--install")
+                if args.password:
+                    sys.argv.extend(["--password", args.password])
+                release_main()
         elif args.command == 'build-desktop' or args.command == 'build-linux':
             build_frontend()
             from pywebapp.scripts.build_desktop import main as desktop_main

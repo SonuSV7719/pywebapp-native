@@ -20,12 +20,31 @@ Design goals:
     - Validation: optional parameter type checking
 """
 
+import asyncio
+import threading
 import functools
 import inspect
 import logging
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("pywebapp.registry")
+
+# --- 🚀 Background Event Loop for Async Support ---
+_loop = None
+_loop_thread = None
+
+def _start_background_loop(loop):
+    asyncio.set_event_loop(loop)
+    loop.run_forever()
+
+def _get_background_loop():
+    global _loop, _loop_thread
+    if _loop is None:
+        _loop = asyncio.new_event_loop()
+        _loop_thread = threading.Thread(target=_start_background_loop, args=(_loop,), daemon=True)
+        _loop_thread.start()
+        logger.info("Async background loop started.")
+    return _loop
 
 
 class MethodRegistry:
@@ -34,25 +53,13 @@ class MethodRegistry:
 
     This is the framework's extension point. All Python functions that should
     be callable from JavaScript must be registered here.
-
-    Usage:
-        registry = MethodRegistry()
-
-        @registry.register("add", description="Add two numbers")
-        def add(a, b):
-            return a + b
-
-        # Or register without decorator:
-        registry.register_function("subtract", subtract, description="Subtract")
-
-        # Call:
-        result = registry.call("add", [5, 7])  # → 12
     """
 
     def __init__(self):
         self._methods = {}  # type: Dict[str, Dict[str, Any]]
         self._middleware_pre = []  # type: List[Callable]
         self._middleware_post = []  # type: List[Callable]
+        self._lock = threading.RLock()  # 🔒 Thread safety lock for concurrent calls
 
     def register(
         self,
@@ -62,24 +69,6 @@ class MethodRegistry:
     ) -> Callable:
         """
         Decorator to register a function as an IPC-callable method.
-
-        Args:
-            name: Method name for IPC calls. Defaults to function name.
-            description: Human-readable description (for introspection/docs).
-            namespace: Optional namespace prefix (e.g., "math" → "math.add").
-
-        Returns:
-            Decorator function.
-
-        Example:
-            @registry.register(description="Add two numbers")
-            def add(a, b):
-                return a + b
-
-            @registry.register("custom_name", namespace="utils")
-            def my_func():
-                pass
-            # Registered as "utils.custom_name"
         """
         def decorator(func: Callable) -> Callable:
             method_name = name or func.__name__
@@ -103,149 +92,165 @@ class MethodRegistry:
     ) -> None:
         """
         Register a function directly (without decorator).
-
-        Args:
-            name: Method name for IPC calls.
-            func: The callable to register.
-            description: Human-readable description.
         """
-        if name in self._methods:
-            logger.warning(f"Overwriting existing method: '{name}'")
+        with self._lock:
+            if name in self._methods:
+                logger.warning(f"Overwriting existing method: '{name}'")
 
-        # Extract signature info for introspection
-        sig = inspect.signature(func)
-        params = []
-        for param_name, param in sig.parameters.items():
-            param_info = {"name": param_name}
-            if param.annotation != inspect.Parameter.empty:
-                param_info["type"] = param.annotation.__name__ if hasattr(param.annotation, '__name__') else str(param.annotation)
-            if param.default != inspect.Parameter.empty:
-                param_info["default"] = param.default
-            params.append(param_info)
+            # Extract signature info for introspection
+            sig = inspect.signature(func)
+            params = []
+            for param_name, param in sig.parameters.items():
+                param_info = {"name": param_name}
+                if param.annotation != inspect.Parameter.empty:
+                    param_info["type"] = param.annotation.__name__ if hasattr(param.annotation, '__name__') else str(param.annotation)
+                if param.default != inspect.Parameter.empty:
+                    param_info["default"] = param.default
+                params.append(param_info)
 
-        self._methods[name] = {
-            "function": func,
-            "description": description.strip(),
-            "params": params,
-            "module": func.__module__,
-        }
-
-        logger.debug(f"Registered method: '{name}' ({description})")
+            self._methods[name] = {
+                "function": func,
+                "description": description.strip() or func.__doc__ or "",
+                "params": params,
+                "module": func.__module__,
+            }
+            logger.debug(f"Registered method: '{name}'")
 
     def unregister(self, name: str) -> bool:
         """
         Remove a method from the registry.
-
-        Args:
-            name: Method name to remove.
-
-        Returns:
-            True if the method was removed, False if it didn't exist.
         """
-        if name in self._methods:
-            del self._methods[name]
-            logger.debug(f"Unregistered method: '{name}'")
-            return True
-        return False
+        with self._lock:
+            if name in self._methods:
+                del self._methods[name]
+                logger.debug(f"Unregistered method: '{name}'")
+                return True
+            return False
 
     def call(self, method: str, params: Optional[List[Any]] = None) -> Any:
         """
-        Call a registered method by name.
-
-        Args:
-            method: Name of the method.
-            params: List of positional arguments.
-
-        Returns:
-            Return value of the called function.
-
-        Raises:
-            KeyError: If method is not registered.
-            TypeError: If wrong number/type of arguments.
+        Call a registered method by name. Automatically handles both 
+        synchronous and asynchronous functions.
         """
         if params is None:
             params = []
 
-        if method not in self._methods:
-            available = list(self._methods.keys())
-            raise KeyError(f"Unknown method: '{method}'. Available: {available}")
+        with self._lock:
+            if method not in self._methods:
+                available = list(self._methods.keys())
+                raise KeyError(f"Unknown method: '{method}'. Available: {available}")
 
-        entry = self._methods[method]
-        func = entry["function"]
+            entry = self._methods[method]
+            func = entry["function"]
+            # 🔒 P1: Snapshot middleware to prevent race conditions
+            pre_mw = list(self._middleware_pre)
+            post_mw = list(self._middleware_post)
 
-        # Run pre-middleware
-        for mw in self._middleware_pre:
+        # Run pre-middleware (outside lock for performance)
+        for mw in pre_mw:
             mw(method, params)
 
-        # Execute
-        result = func(*params)
+        # Execute: Handle Async vs Sync
+        if inspect.iscoroutinefunction(func):
+            result = self._run_async(func, *params)
+        else:
+            result = func(*params)
 
         # Run post-middleware
-        for mw in self._middleware_post:
+        for mw in post_mw:
             mw(method, params, result)
 
         return result
 
+    # Maximum time (seconds) an async handler is allowed to run
+    ASYNC_TIMEOUT = 30
+
+    def _run_async(self, func: Callable, *args: Any) -> Any:
+        """
+        Executes an async function in the dedicated background loop
+        and waits for the result with performance tracking.
+        """
+        import time
+        start_time = time.perf_counter()
+        
+        loop = _get_background_loop()
+        future = asyncio.run_coroutine_threadsafe(func(*args), loop)
+        try:
+            # 🔒 P1: Timeout prevents thread starvation from hanging coroutines
+            result = future.result(timeout=self.ASYNC_TIMEOUT)
+        except TimeoutError:
+            future.cancel()
+            raise TimeoutError(
+                f"Async handler '{func.__name__}' exceeded {self.ASYNC_TIMEOUT}s timeout"
+            )
+        
+        duration = time.perf_counter() - start_time
+        logger.info(f"⚡ Async task '{func.__name__}' took {duration:.4f}s in Python")
+        return result
+
     def has_method(self, name: str) -> bool:
         """Check if a method is registered."""
-        return name in self._methods
+        with self._lock:
+            return name in self._methods
 
     def list_methods(self) -> Dict[str, str]:
         """
         Returns a dict of {method_name: description} for all registered methods.
         """
-        return {
-            name: entry["description"]
-            for name, entry in self._methods.items()
-        }
+        with self._lock:
+            return {
+                name: entry["description"]
+                for name, entry in self._methods.items()
+            }
 
     def get_method_info(self, name: str) -> Optional[Dict[str, Any]]:
         """
         Get detailed info about a registered method (params, types, etc.).
-
-        Returns:
-            Dict with keys: description, params, module. None if not found.
         """
-        entry = self._methods.get(name)
-        if entry is None:
-            return None
+        with self._lock:
+            entry = self._methods.get(name)
+            if entry is None:
+                return None
 
-        return {
-            "description": entry["description"],
-            "params": entry["params"],
-            "module": entry["module"],
-        }
-
-    def get_schema(self) -> Dict[str, Any]:
-        """
-        Returns a full schema of all registered methods.
-        Useful for generating documentation or client SDKs.
-        """
-        schema = {}
-        for name, entry in self._methods.items():
-            schema[name] = {
+            return {
                 "description": entry["description"],
                 "params": entry["params"],
                 "module": entry["module"],
             }
-        return schema
+
+    def get_schema(self) -> Dict[str, Any]:
+        """
+        Returns a full schema of all registered methods.
+        """
+        with self._lock:
+            schema = {}
+            for name, entry in self._methods.items():
+                schema[name] = {
+                    "description": entry["description"],
+                    "params": entry["params"],
+                    "module": entry["module"],
+                }
+            return schema
 
     def add_pre_middleware(self, func: Callable) -> None:
         """
-        Add a pre-call middleware. Called as middleware(method, params) before execution.
+        Add a pre-call middleware.
         """
-        self._middleware_pre.append(func)
+        with self._lock:
+            self._middleware_pre.append(func)
 
     def add_post_middleware(self, func: Callable) -> None:
         """
-        Add a post-call middleware. Called as middleware(method, params, result) after execution.
+        Add a post-call middleware.
         """
-        self._middleware_post.append(func)
+        with self._lock:
+            self._middleware_post.append(func)
 
     @property
     def method_count(self) -> int:
         """Number of registered methods."""
-        return len(self._methods)
+        with self._lock:
+            return len(self._methods)
 
 
 # ─── Global singleton ────────────────────────────────────────────
