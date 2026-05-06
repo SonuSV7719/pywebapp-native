@@ -106,6 +106,55 @@ def sync_app_config():
     except Exception as e:
         print(f"⚠️ Warning: Could not sync pywebapp.json config: {e}")
 
+def _ensure_vite_android_compat(frontend_dir):
+    """
+    Auto-patch vite.config.js to ensure Android emulators/devices can connect.
+    Vite v6+ has strict host checking that silently drops connections from 
+    unknown origins (like 10.0.2.2 or ADB reverse tunnels).
+    
+    This function ensures:
+      - server.host = true  (bind to 0.0.0.0, not just localhost)
+      - server.allowedHosts = 'all'  (accept connections from any origin)
+    """
+    vite_config_path = os.path.join(frontend_dir, "vite.config.js")
+    if not os.path.exists(vite_config_path):
+        return
+    
+    with open(vite_config_path, "r", encoding="utf-8") as f:
+        content = f.read()
+    
+    modified = False
+    
+    # Check if host: true is missing from the server block
+    if "host:" not in content and "server:" in content:
+        content = content.replace(
+            "open: false,",
+            "open: false,\n    host: true,\n    allowedHosts: 'all',"
+        )
+        modified = True
+    elif "host:" not in content:
+        # No server block at all — shouldn't happen with our template but handle it
+        content = content.replace(
+            "});",
+            "  server: {\n    host: true,\n    allowedHosts: 'all',\n  },\n});"
+        )
+        modified = True
+    
+    # Check if allowedHosts is missing but host is present
+    if "allowedHosts" not in content and "host:" in content:
+        content = content.replace(
+            "host: true,",
+            "host: true,\n    allowedHosts: 'all',"
+        )
+        modified = True
+    
+    if modified:
+        with open(vite_config_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        print("  🛡️ Auto-patched vite.config.js for Android compatibility")
+    else:
+        print("  ✅ vite.config.js already Android-compatible")
+
 def dev_server(mode="desktop", port=5173):
     sync_app_config()
     frontend_dir = os.path.join(os.getcwd(), 'frontend')
@@ -113,18 +162,44 @@ def dev_server(mode="desktop", port=5173):
     if mode == "android":
         print("\n🤖 Preparing Android Dev Environment...")
         
-        # 1. 🧼 ALWAYS perform a clean build and install first (per user request)
-        print("  🔨 Building fresh Debug APK (Clean)...")
-        from pywebapp.scripts.build_android import main as build_main
-        original_argv = sys.argv.copy()
-        sys.argv = [original_argv[0], "--clean", "--install"]
-        build_main()
+        # 0. 🛡️ AUTO-PATCH: Ensure vite.config.js has host:true and allowedHosts:'all'
+        #    This is critical for Android emulators/devices to reach the Vite server.
+        _ensure_vite_android_compat(frontend_dir)
         
-        # 2. 🔄 Now start the live sync engine
-        print("\n🚀 Launching Android Dev Sync (Hot Reload)...")
-        from pywebapp.scripts.dev_sync import main as dev_sync_main
-        sys.argv = [original_argv[0], "--port", str(port), "--setup-reverse"]
-        dev_sync_main()
+        # 1. 🚀 Start Vite dev server in background FIRST (so emulator can connect)
+        print("  ⚡ Starting Vite frontend server on port %d..." % port)
+        vite_proc = subprocess.Popen(
+            ["npm", "run", "dev", "--", "--port", str(port)],
+            cwd=frontend_dir, shell=True
+        )
+        
+        import time
+        time.sleep(3)  # Give Vite time to start before the emulator tries to connect
+        print("  ✅ Vite dev server running on port %d" % port)
+        
+        try:
+            # 2. 🧼 Build and install debug APK
+            print("  🔨 Building fresh Debug APK (Clean)...")
+            from pywebapp.scripts.build_android import main as build_main
+            original_argv = sys.argv.copy()
+            sys.argv = [original_argv[0], "--clean", "--install"]
+            build_main()
+            
+            # 3. 🔄 Start the live Python sync engine (blocks until Ctrl+C)
+            print("\n🚀 Launching Android Dev Sync (Hot Reload)...")
+            from pywebapp.scripts.dev_sync import main as dev_sync_main
+            sys.argv = [original_argv[0], "--port", str(port), "--setup-reverse"]
+            dev_sync_main()
+        except KeyboardInterrupt:
+            print("\n👋 Stopping Android dev environment...")
+        finally:
+            print("🧹 Cleaning up background processes...")
+            if os.name == 'nt':
+                subprocess.run(['taskkill', '/F', '/T', '/PID', str(vite_proc.pid)],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                vite_proc.terminate()
+            print("✅ Cleanup complete.")
         return
 
     if mode == "web":
