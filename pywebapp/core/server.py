@@ -106,12 +106,28 @@ def create_app(static_dir: str) -> Flask:
     log = logging.getLogger("werkzeug")
     log.setLevel(logging.WARNING)
 
-    # 🔒 Security: Restrict CORS to localhost origins only
-    CORS(app, origins=[
+    # 🔒 Security: Dynamic CORS configuration
+    # Default to secure local-only, but allow overrides for web deployments
+    allowed_origins = [
         "http://localhost:*",
         "http://127.0.0.1:*",
         "http://[::1]:*",
-    ])
+    ]
+    
+    # Try to load custom CORS from pywebapp.json
+    try:
+        project_root = _find_project_root()
+        config_path = os.path.join(project_root, "pywebapp.json")
+        if os.path.exists(config_path):
+            import json
+            with open(config_path, "r") as f:
+                config = json.load(f)
+                if "cors_origins" in config:
+                    allowed_origins = config["cors_origins"]
+    except Exception:
+        pass
+
+    CORS(app, origins=allowed_origins)
 
     # ── API Routes ────────────────────────────────────────────────────────
 
