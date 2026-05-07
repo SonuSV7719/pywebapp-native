@@ -221,26 +221,14 @@ def _sync_core_files():
     
     # 🚀 Total Sync: Push everything inside the pywebapp package folder
     target_framework_dir = os.path.join(ANDROID_PYTHON_DIR, "pywebapp")
-    os.makedirs(target_framework_dir, exist_ok=True)
     
-    for item in os.listdir(framework_dir):
-        # Skip pycache and temp files
-        if item.startswith("__pycache__") or item.endswith(".pyc") or item.startswith("."):
-            continue
-            
-        src_item = os.path.join(framework_dir, item)
-        dst_item = os.path.join(target_framework_dir, item)
-        
-        if os.path.isdir(src_item):
-            # Check if it's a python package (has __init__.py)
-            if os.path.exists(os.path.join(src_item, "__init__.py")):
-                if os.path.exists(dst_item):
-                    shutil.rmtree(dst_item)
-                shutil.copytree(src_item, dst_item)
-                print(f"  ✅ [core] package: {item} → android/.../pywebapp/{item}")
-        elif item == "__init__.py":
-            shutil.copy2(src_item, dst_item)
-            print(f"  ✅ [core] file: {item} → android/.../pywebapp/{item}")
+    # We don't need to os.makedirs since copytree creates the target directory
+    shutil.copytree(
+        framework_dir, 
+        target_framework_dir, 
+        ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '.*', '*.egg-info')
+    )
+    print("  ✅ [core] pywebapp framework fully synced")
 
 
 def build_frontend_for_android():
