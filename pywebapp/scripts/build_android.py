@@ -272,10 +272,16 @@ def build_apk(clean=False):
         print("   or run: cd android && gradle wrapper")
         return
 
+    # Run clean as a SEPARATE process if requested
+    # (Running "clean assembleDebug" in one command can cause Chaquopy's generated files to be deleted mid-build)
+    if clean:
+        clean_result = subprocess.run([gradle_path, "clean"], cwd=ANDROID_DIR)
+        if clean_result.returncode != 0:
+            print("❌ Gradle clean failed")
+            sys.exit(clean_result.returncode)
+
     # Build the task list
     tasks = ["assembleDebug"]
-    if clean:
-        tasks.insert(0, "clean")
 
     result = subprocess.run(
         [gradle_path] + tasks,

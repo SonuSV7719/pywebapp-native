@@ -114,8 +114,6 @@ def setup_keystore(password):
 def build_apk(clean=False):
     """Run Gradle to build the release APK."""
     print("\n📦 Building Signed Release APK via Gradle...")
-    if clean:
-        print("🧼 Performing clean build...")
     
     is_windows = sys.platform.startswith('win')
     gradlew = "gradlew.bat" if is_windows else "./gradlew"
@@ -124,10 +122,17 @@ def build_apk(clean=False):
     if not os.path.exists(gradle_path):
         print("\n❌ Build failed: Gradle Wrapper not found!")
         sys.exit(1)
+
+    # Run clean as a SEPARATE process to prevent it from wiping out
+    # Chaquopy's generated files during parallel execution
+    if clean:
+        print("🧼 Performing clean build...")
+        clean_result = subprocess.run([gradle_path, "clean"], cwd=ANDROID_DIR)
+        if clean_result.returncode != 0:
+            print("\n❌ Gradle clean failed.")
+            sys.exit(clean_result.returncode)
     
     tasks = ["assembleRelease"]
-    if clean:
-        tasks.insert(0, "clean")
         
     result = subprocess.run([gradle_path] + tasks, cwd=ANDROID_DIR)
     if result.returncode != 0:
