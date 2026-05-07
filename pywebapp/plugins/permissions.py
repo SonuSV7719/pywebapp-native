@@ -113,16 +113,19 @@ def request(permission: str) -> bool:
     if not _is_android():
         return True
 
-    from com.chaquo.python import Python # type: ignore
+    from pywebapp.core import context
     try:
-        # 1. Get the current Activity
-        activity = Python.getPlatform().getApplication()
+        # 1. Get the current MainActivity instance (registered by the bridge)
+        activity = context.get_activity()
+        if not activity:
+            # Fallback to application if activity isn't registered (shouldn't happen)
+            from com.chaquo.python import Python # type: ignore
+            activity = Python.getPlatform().getApplication()
         
         # 2. Reset the event
         _request_event.clear()
         
         # 3. Trigger the real Android popup
-        # Note: We use the existing MainActivity method we just created
         activity.requestRuntimePermission(permission, "internal_python_callback")
         
         # 4. Wait for the user (Max 60 seconds)
