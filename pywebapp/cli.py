@@ -159,6 +159,13 @@ def dev_server(mode="desktop", port=5173):
     sync_app_config()
     frontend_dir = os.path.join(os.getcwd(), 'frontend')
 
+    # 🛡️ Validate project root — prevent WinError 267 crashes
+    if not os.path.isdir(frontend_dir):
+        print(f"\n❌ Error: No 'frontend/' directory found in {os.getcwd()}")
+        print("   Make sure you run 'pywebapp dev' from your project root directory.")
+        print("   Example: cd C:\\My_Project\\YourApp && pywebapp dev")
+        return
+
     if mode == "android":
         print("\n🤖 Preparing Android Dev Environment...")
         
