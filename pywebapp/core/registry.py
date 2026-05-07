@@ -61,6 +61,22 @@ class MethodRegistry:
         self._middleware_post = []  # type: List[Callable]
         self._lock = threading.RLock()  # 🔒 Thread safety lock for concurrent calls
 
+    # FIXED: BUG A — Implement dictionary protocol for native bridge compatibility
+    def __contains__(self, name: str) -> bool:
+        """Support 'in' operator: if 'method' in registry"""
+        return self.has_method(name)
+
+    def __getitem__(self, name: str) -> Callable:
+        """Support bracket access: registry['method']()"""
+        with self._lock:
+            if name not in self._methods:
+                raise KeyError(f"Method '{name}' not found")
+            return self._methods[name]["function"]
+
+    def put(self, name: str, func: Callable) -> None:
+        """Support Java-style put() for native bridge initialization"""
+        self.register_function(name, func)
+
     def register(
         self,
         name: Optional[str] = None,
@@ -97,22 +113,27 @@ class MethodRegistry:
             if name in self._methods:
                 logger.warning(f"Overwriting existing method: '{name}'")
 
-            # Extract signature info for introspection
-            sig = inspect.signature(func)
+            # FIXED: BUG A — Support Java/native callables that can't be introspected by inspect.signature
             params = []
-            for param_name, param in sig.parameters.items():
-                param_info = {"name": param_name}
-                if param.annotation != inspect.Parameter.empty:
-                    param_info["type"] = param.annotation.__name__ if hasattr(param.annotation, '__name__') else str(param.annotation)
-                if param.default != inspect.Parameter.empty:
-                    param_info["default"] = param.default
-                params.append(param_info)
+            try:
+                # Extract signature info for introspection
+                sig = inspect.signature(func)
+                for param_name, param in sig.parameters.items():
+                    param_info = {"name": param_name}
+                    if param.annotation != inspect.Parameter.empty:
+                        param_info["type"] = param.annotation.__name__ if hasattr(param.annotation, '__name__') else str(param.annotation)
+                    if param.default != inspect.Parameter.empty:
+                        param_info["default"] = param.default
+                    params.append(param_info)
+            except (ValueError, TypeError):
+                # Fallback for native objects (like Chaquopy-wrapped Java callables)
+                pass
 
             self._methods[name] = {
                 "function": func,
-                "description": description.strip() or func.__doc__ or "",
+                "description": description.strip() or getattr(func, '__doc__', None) or "",
                 "params": params,
-                "module": func.__module__,
+                "module": getattr(func, '__module__', 'native'),
             }
             logger.debug(f"Registered method: '{name}'")
 

@@ -22,6 +22,7 @@ import importlib.util
 import os
 import pkgutil
 import sys
+import threading
 import traceback
 
 from pywebapp.core.logger import get_logger
@@ -29,6 +30,8 @@ from pywebapp.core.logger import get_logger
 logger = get_logger("discovery")
 
 _discovered = False
+# FIXED: BUG C — Private lock for discovery to prevent TOCTOU race
+_discovery_lock = threading.Lock()
 
 
 def _find_project_root() -> str:
@@ -44,12 +47,6 @@ def _find_project_root() -> str:
 def _try_import_backend():
     """
     Try to import the 'backend' package using Python's standard import system.
-    
-    This works on ALL platforms because:
-      - Desktop/Web: project root is in sys.path or cwd
-      - Android (bundled): Chaquopy's AssetFinder resolves it from APK assets
-      - Android (dev): /data/local/tmp/pywebapp/python is prepended to sys.path
-      - PyInstaller: the frozen module finder resolves it
     """
     try:
         backend = importlib.import_module("backend")
@@ -64,7 +61,7 @@ def _try_import_backend():
 def _try_path_import_backend():
     """
     Fallback: Try to find and import backend/ from the filesystem directly.
-    Used when the standard import fails (e.g., backend/ is not on sys.path).
+    Used when the standard import fails.
     """
     # 1. Check project root (anchored by pywebapp.json)
     project_root = os.path.abspath(os.path.normpath(_find_project_root()))
@@ -109,65 +106,68 @@ def _try_path_import_backend():
 def discover_handlers() -> bool:
     """
     Discover and import all user handlers from the backend/ package.
-    
-    Uses a multi-strategy approach for maximum robustness:
-      1. Standard import (Chaquopy, sys.path, frozen bundles)
-      2. Path-based import (filesystem fallback)
-      3. Legacy single-file import (handlers.py without backend/)
-    
-    Returns True if any handlers were found and loaded.
+    Thread-safe implementation with double-checked locking.
     """
     global _discovered
     if _discovered:
         return True
 
-    # === Strategy 1: Standard Python import (works everywhere) ===
-    backend = _try_import_backend()
-    
-    # === Strategy 2: Filesystem path-based import (fallback) ===
-    if backend is None:
-        backend = _try_path_import_backend()
-    
-    # === Strategy 3: Legacy single-file handler (no backend/ package) ===
-    if backend is None:
-        for target in ["backend.handlers", "handlers"]:
-            try:
-                importlib.import_module(target)
-                logger.info(f"[Discovery] Loaded legacy handler: {target}")
-                _discovered = True
-                return True
-            except ImportError:
-                continue
+    # FIXED: BUG C — Ensure EVERYTHING is inside the lock block
+    with _discovery_lock:
+        # Double-check pattern
+        if _discovered:
+            return True
         
-        logger.warning("[Discovery] No 'backend/' package found on any platform.")
-        _discovered = True
-        return False
+        # === Strategy 1: Standard Python import (works everywhere) ===
+        backend = _try_import_backend()
+        
+        # === Strategy 2: Filesystem path-based import (fallback) ===
+        if backend is None:
+            backend = _try_path_import_backend()
+        
+        # === Strategy 3: Legacy single-file handler (no backend/ package) ===
+        if backend is None:
+            found_legacy = False
+            for target in ["backend.handlers", "handlers"]:
+                try:
+                    importlib.import_module(target)
+                    logger.info(f"[Discovery] Loaded legacy handler: {target}")
+                    found_legacy = True
+                    break
+                except ImportError:
+                    continue
+            
+            if not found_legacy:
+                logger.warning("[Discovery] No 'backend/' package found on any platform.")
+            
+            _discovered = True
+            return found_legacy
 
-    # === Walk and load sub-modules with ISOLATION ===
-    loaded = 0
-    try:
-        for loader, module_name, is_pkg in pkgutil.walk_packages(
-            backend.__path__, backend.__name__ + "."
-        ):
-            try:
-                importlib.import_module(module_name)
-                logger.debug(f"  ✅ {module_name}")
-                loaded += 1
-            except Exception:
-                logger.warning(f"  ❌ {module_name} (FAILED)")
-                logger.debug(f"     {traceback.format_exc().splitlines()[-1]}")
-                continue
-    except Exception as e:
-        # pkgutil.walk_packages itself can fail on some platforms
-        logger.warning(f"[Discovery] walk_packages failed: {e}")
-        # Try direct import of backend.handlers as last resort
+        # === Walk and load sub-modules with ISOLATION ===
+        loaded = 0
         try:
-            importlib.import_module("backend.handlers")
-            logger.info("[Discovery] Direct import of backend.handlers succeeded")
-            loaded = 1
-        except Exception as e2:
-            logger.error(f"[Discovery] Direct import also failed: {e2}")
+            for loader, module_name, is_pkg in pkgutil.walk_packages(
+                backend.__path__, backend.__name__ + "."
+            ):
+                try:
+                    importlib.import_module(module_name)
+                    logger.debug(f"  ✅ {module_name}")
+                    loaded += 1
+                except Exception:
+                    logger.warning(f"  ❌ {module_name} (FAILED)")
+                    logger.debug(f"     {traceback.format_exc().splitlines()[-1]}")
+                    continue
+        except Exception as e:
+            # pkgutil.walk_packages itself can fail on some platforms
+            logger.warning(f"[Discovery] walk_packages failed: {e}")
+            # Try direct import of backend.handlers as last resort
+            try:
+                importlib.import_module("backend.handlers")
+                logger.info("[Discovery] Direct import of backend.handlers succeeded")
+                loaded = 1
+            except Exception as e2:
+                logger.error(f"[Discovery] Direct import also failed: {e2}")
 
-    _discovered = True
-    logger.info(f"[Discovery] Loaded {loaded} handler module(s)")
-    return loaded > 0
+        _discovered = True
+        logger.info(f"[Discovery] Loaded {loaded} handler module(s)")
+        return loaded > 0

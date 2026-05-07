@@ -20,6 +20,7 @@ import json
 import importlib
 import traceback
 import pkgutil
+import threading
 from typing import Any, Dict, List, Optional
 
 from pywebapp.core import context
@@ -30,6 +31,8 @@ logger = get_logger("api")
 
 # Track whether user handlers have been discovered
 _handlers_loaded = False
+# FIXED: BUG C — Lock for discovery to prevent TOCTOU race
+_handlers_lock = threading.Lock()
 
 
 def _discover_user_handlers():
@@ -41,9 +44,14 @@ def _discover_user_handlers():
     if _handlers_loaded:
         return
 
-    from pywebapp.core.discovery import discover_handlers
-    discover_handlers()
-    _handlers_loaded = True
+    with _handlers_lock:
+        # Double-check pattern (lock-checked-set)
+        if _handlers_loaded:
+            return
+
+        from pywebapp.core.discovery import discover_handlers
+        discover_handlers()
+        _handlers_loaded = True
 
 
 def set_context(data_json: str) -> None:
@@ -73,8 +81,9 @@ def hide_splash():
     # We use a special internal method name that the bridge listens for
     # or we can use the registry to store a "dismiss" signal.
     from pywebapp.core.registry import method_registry
-    if "internal_hide_splash" in method_registry:
-        method_registry["internal_hide_splash"]()
+    # FIXED: BUG A — Use proper API or dict protocol
+    if method_registry.has_method("internal_hide_splash"):
+        method_registry.call("internal_hide_splash", [])
     else:
         # Fallback: if not registered, we just log it
         get_logger("api").info("🌊 Splash dismiss requested from Python")

@@ -107,11 +107,11 @@ def create_app(static_dir: str) -> Flask:
     log.setLevel(logging.WARNING)
 
     # 🔒 Security: Dynamic CORS configuration
-    # Default to secure local-only, but allow overrides for web deployments
+    # FIXED: BUG F — Use regex strings for CORS wildcard port support
     allowed_origins = [
-        "http://localhost:*",
-        "http://127.0.0.1:*",
-        "http://[::1]:*",
+        "http://localhost:.*",
+        "http://127.0.0.1:.*",
+        "http://\\[::1\\]:.*"
     ]
     
     # Try to load custom CORS from pywebapp.json
@@ -123,7 +123,8 @@ def create_app(static_dir: str) -> Flask:
             with open(config_path, "r") as f:
                 config = json.load(f)
                 if "cors_origins" in config:
-                    allowed_origins = config["cors_origins"]
+                    # FIXED: BUG F — Normalize origins (convert globs to regex if needed)
+                    allowed_origins = [o.replace("*", ".*") for o in config["cors_origins"]]
     except Exception:
         pass
 
@@ -205,11 +206,18 @@ def create_app(static_dir: str) -> Flask:
     return app
 
 
+# FIXED: BUG G — Cache the index HTML to avoid disk I/O on every request
+_index_html_cache = None
+
 def _serve_html_with_marker(static_dir: str):
     """
     Serve index.html with the __PYWEBAPP_API_URL__ marker injected.
     This tells the bridge to use fetch() instead of mock mode.
     """
+    global _index_html_cache
+    if _index_html_cache:
+        return _index_html_cache, 200, {"Content-Type": "text/html; charset=utf-8"}
+
     index_path = os.path.join(static_dir, "index.html")
     if not os.path.isfile(index_path):
         return "index.html not found", 404
@@ -222,6 +230,7 @@ def _serve_html_with_marker(static_dir: str):
     if marker not in html:
         html = html.replace("<head>", f"<head>\n    {marker}", 1)
 
+    _index_html_cache = html
     return html, 200, {"Content-Type": "text/html; charset=utf-8"}
 
 

@@ -29,7 +29,6 @@ class BridgeApi:
     """
 
     def __init__(self):
-        self._lock = threading.Lock()
         logger.info("BridgeApi initialized")
 
     def call(self, method: str, params_json: str = "[]") -> str:
@@ -46,8 +45,9 @@ class BridgeApi:
         """
         logger.info(f"Bridge.call: method='{method}', params={params_json}")
 
-        with self._lock:
-            result = dispatch_json(method, params_json)
+        # FIXED: BUG D — Remove lock. dispatch_json and registry are already thread-safe.
+        # This allows concurrent Python calls from the JS side.
+        result = dispatch_json(method, params_json)
 
         logger.debug(f"Bridge.call result: {result[:200]}...")
         return result
@@ -73,7 +73,7 @@ class BridgeApi:
             return json.dumps({"success": False, "error": "No active window"})
             
         try:
-            result = window.create_file_dialog(webview.OPEN_DIALOG, dialog_title=dialog_title, file_types=file_types)
+            result = window.create_file_dialog(webview.OPEN_DIALOG, file_types=tuple(file_types))
             if result and len(result) > 0:
                 file_path = result[0]
                 # Format response for the JS bridge

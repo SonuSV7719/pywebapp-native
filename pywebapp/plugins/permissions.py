@@ -91,11 +91,14 @@ SYSTEM_ALERT_WINDOW = "android.permission.SYSTEM_ALERT_WINDOW" # Overlay
 READ_HISTORY_BOOKMARKS = "com.android.browser.permission.READ_HISTORY_BOOKMARKS"
 WRITE_HISTORY_BOOKMARKS = "com.android.browser.permission.WRITE_HISTORY_BOOKMARKS"
 
-def _is_android() -> bool:
-    return "ANDROID_STORAGE" in os.environ
-
+import sys
 import threading
 
+def _is_android() -> bool:
+    # FIXED: BUG E — Match reliable detection from logger.py
+    return hasattr(sys, "getandroidapilevel")
+
+_request_lock = threading.Lock()
 _request_event = threading.Event()
 _last_result = False
 
@@ -113,29 +116,31 @@ def request(permission: str) -> bool:
     if not _is_android():
         return True
 
-    from pywebapp.core import context
-    try:
-        # 1. Get the current MainActivity instance (registered by the bridge)
-        activity = context.get_activity()
-        if not activity:
-            # Fallback to application if activity isn't registered (shouldn't happen)
-            from com.chaquo.python import Python # type: ignore
-            activity = Python.getPlatform().getApplication()
-        
-        # 2. Reset the event
-        _request_event.clear()
-        
-        # 3. Trigger the real Android popup
-        activity.requestRuntimePermission(permission, "internal_python_callback")
-        
-        # 4. Wait for the user (Max 60 seconds)
-        # The bridge will call _on_permission_result via the api dispatcher
-        _request_event.wait(timeout=60.0)
-        
-        return _last_result
-    except Exception as e:
-        print(f"Permission request error: {e}")
-        return False
+    # FIXED: BUG B — Use Lock to prevent concurrent permission request corruption
+    with _request_lock:
+        from pywebapp.core import context
+        try:
+            # 1. Get the current MainActivity instance (registered by the bridge)
+            activity = context.get_activity()
+            if not activity:
+                # Fallback to application if activity isn't registered (shouldn't happen)
+                from com.chaquo.python import Python # type: ignore
+                activity = Python.getPlatform().getApplication()
+            
+            # 2. Reset the event
+            _request_event.clear()
+            
+            # 3. Trigger the real Android popup
+            activity.requestRuntimePermission(permission, "internal_python_callback")
+            
+            # 4. Wait for the user (Max 60 seconds)
+            # The bridge will call _on_permission_result via the api dispatcher
+            _request_event.wait(timeout=60.0)
+            
+            return _last_result
+        except Exception as e:
+            print(f"Permission request error: {e}")
+            return False
 
 def list_all() -> List[str]:
     """
@@ -153,7 +158,13 @@ def list_all() -> List[str]:
         return [attr for attr in all_attrs if attr.isupper() and not attr.startswith("_")]
     except Exception as e:
         print(f"Failed to list dynamic permissions: {e}")
-        return [CAMERA, LOCATION, STORAGE_WRITE]
+        # Improved fallback list for better developer clarity
+        return [
+            CAMERA, MICROPHONE, 
+            LOCATION, LOCATION_COARSE, 
+            STORAGE_READ, STORAGE_WRITE, 
+            POST_NOTIFICATIONS
+        ]
 
 def get_status(permission: str) -> bool:
     """Check if a permission is already granted without showing a popup."""
