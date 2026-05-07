@@ -166,18 +166,11 @@ def sync_python_files():
     """
     print("\n📋 Syncing Python files to Android...")
 
-    os.makedirs(ANDROID_PYTHON_DIR, exist_ok=True)
-
-    # 🧹 CLEANUP: Remove old synced files to prevent conflicts
+    # 🧹 CLEANUP: Completely wipe the old directory to prevent ghost files
     print("  🧹 Cleaning old Python files...")
-    for item in ["api.py", "context.py", "logger.py", "registry.py", "backend", "pywebapp"]:
-        item_path = os.path.join(ANDROID_PYTHON_DIR, item)
-        if os.path.exists(item_path):
-            if os.path.isdir(item_path):
-                shutil.rmtree(item_path)
-            else:
-                os.remove(item_path)
-
+    if os.path.exists(ANDROID_PYTHON_DIR):
+        shutil.rmtree(ANDROID_PYTHON_DIR)
+    os.makedirs(ANDROID_PYTHON_DIR, exist_ok=True)
     if not os.path.exists(BACKEND_DIR):
         print(f"  ⚠️  Backend directory not found: {BACKEND_DIR}")
         return
