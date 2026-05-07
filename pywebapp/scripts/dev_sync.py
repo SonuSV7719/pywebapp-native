@@ -116,6 +116,11 @@ def push_framework_files(device=None):
 
 def push_python_files(device=None):
     """Push backend Python files to the device recursively."""
+    print("  🧹 Cleaning stale files on device...")
+    run_adb(["shell", "rm", "-rf", f"{DEVICE_PYTHON_DIR}/backend"], device)
+    run_adb(["shell", "rm", "-rf", f"{DEVICE_PYTHON_DIR}/pywebapp"], device)
+    run_adb(["shell", "mkdir", "-p", DEVICE_PYTHON_DIR], device)
+
     # First, ensure framework is up to date on device
     push_framework_files(device)
 
@@ -154,15 +159,14 @@ def trigger_reload(device=None):
     Trigger Python module reload on the running app.
     Sends a broadcast intent that the app's DevReceiver picks up.
     """
-    # 🔒 P1: Use dynamic package name instead of hardcoded com.example.pywebapp
-    base_id, suffix = get_package_name()
-    package = f"{base_id}{suffix}"
+    # 🔒 P1: Use dynamic package name and namespace for correct targeting
+    package_id, namespace = get_package_info()
     
     success, output = run_adb(
         [
             "shell", "am", "broadcast",
-            "-a", f"{base_id}.RELOAD_PYTHON",
-            "-n", f"{package}/{base_id}.dev.DevReloadReceiver",
+            "-a", f"{namespace}.RELOAD_PYTHON",
+            "-n", f"{package_id}/{namespace}.dev.DevReloadReceiver",
         ],
         device,
     )
@@ -172,20 +176,26 @@ def trigger_reload(device=None):
         print(f"  ⚠️  Reload signal failed (app may not be in dev mode): {output}")
 
 
-def get_package_name():
-    """Parse build.gradle.kts to find the real applicationId and suffix."""
+def get_package_info():
+    """Parse build.gradle.kts to find the real applicationId, suffix, and namespace."""
     gradle_path = os.path.join(PROJECT_ROOT, "android", "app", "build.gradle.kts")
-    base_id = "com.example.pywebapp"
+    app_id = "com.example.pywebapp"
+    namespace = "com.example.pywebapp"
     suffix = ""
     
     if os.path.exists(gradle_path):
         try:
             with open(gradle_path, "r", encoding="utf-8") as f:
                 content = f.read()
+                # Find namespace = "..."
+                ns_match = re.search(r'namespace\s*=\s*"([^"]+)"', content)
+                if ns_match:
+                    namespace = ns_match.group(1)
+                
                 # Find applicationId = "..."
                 id_match = re.search(r'applicationId\s*=\s*"([^"]+)"', content)
                 if id_match:
-                    base_id = id_match.group(1)
+                    app_id = id_match.group(1)
                 
                 # Find applicationIdSuffix = "..."
                 suffix_match = re.search(r'applicationIdSuffix\s*=\s*"([^"]+)"', content)
@@ -194,17 +204,16 @@ def get_package_name():
         except Exception:
             pass
             
-    return base_id, suffix
+    return f"{app_id}{suffix}", namespace
 
 def launch_app(device=None):
     """Launch the app on the device/emulator. Installs if missing."""
-    base_id, suffix = get_package_name()
-    package = f"{base_id}{suffix}"
+    package_id, namespace = get_package_info()
     
     # 🔍 Check if app is installed
-    _, output = run_adb(["shell", "pm", "list", "packages", package], device)
-    if package not in output:
-        print(f"\n⚠️  App '{package}' not found on device.")
+    _, output = run_adb(["shell", "pm", "list", "packages", package_id], device)
+    if package_id not in output:
+        print(f"\n⚠️  App '{package_id}' not found on device.")
         print("🔨 Starting automated build and installation...")
         from pywebapp.scripts.build_android import build_apk, install_apk
         build_apk()
@@ -213,9 +222,8 @@ def launch_app(device=None):
             return
 
     # 🚀 Launch using Package ID / Full Class Name
-    # We use the base_id for the class path
-    activity = f"{package}/{base_id}.MainActivity"
-    print(f"🚀 Launching app: {package}...")
+    activity = f"{package_id}/{namespace}.MainActivity"
+    print(f"🚀 Launching app: {package_id}...")
     run_adb(["shell", "am", "start", "-n", activity], device)
 
 

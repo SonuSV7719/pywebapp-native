@@ -166,10 +166,13 @@ def sync_python_files():
     """
     print("\n📋 Syncing Python files to Android...")
 
-    # 🧹 CLEANUP: Completely wipe the old directory to prevent ghost files
-    print("  🧹 Cleaning old Python files...")
-    if os.path.exists(ANDROID_PYTHON_DIR):
-        shutil.rmtree(ANDROID_PYTHON_DIR)
+    # 🧹 CLEANUP: Only wipe the directories we manage to avoid deleting user's custom files
+    print("  🧹 Cleaning managed Python directories...")
+    for managed_dir in ["backend", "pywebapp"]:
+        path = os.path.join(ANDROID_PYTHON_DIR, managed_dir)
+        if os.path.exists(path):
+            shutil.rmtree(path)
+    
     os.makedirs(ANDROID_PYTHON_DIR, exist_ok=True)
     if not os.path.exists(BACKEND_DIR):
         print(f"  ⚠️  Backend directory not found: {BACKEND_DIR}")
@@ -217,12 +220,12 @@ def _sync_core_files():
         print("  ⚠️  pywebapp package not found, skipping core sync")
         return
 
-    print("  📦 Syncing Framework Core to APK...")
-    
     # 🚀 Total Sync: Push everything inside the pywebapp package folder
     target_framework_dir = os.path.join(ANDROID_PYTHON_DIR, "pywebapp")
     
-    # We don't need to os.makedirs since copytree creates the target directory
+    if os.path.exists(target_framework_dir):
+        shutil.rmtree(target_framework_dir)
+        
     shutil.copytree(
         framework_dir, 
         target_framework_dir, 
