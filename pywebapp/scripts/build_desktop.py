@@ -46,12 +46,22 @@ def build_desktop():
     print(f"📦 Packaging '{app_name}' with PyInstaller...")
     
     dist_data = f"{DIST_DIR}{os.pathsep}frontend/dist"
-    backend_dir = os.path.join(PROJECT_ROOT, "backend")
-    backend_data = f"{backend_dir}{os.pathsep}backend"
     config_data = f"{os.path.join(PROJECT_ROOT, 'pywebapp.json')}{os.pathsep}."
     
     # Find the run_desktop script from the pywebapp package
     run_desktop_path = os.path.join(os.path.dirname(__file__), "run_desktop.py")
+    
+    # Discover all backend modules for --hidden-import
+    backend_dir = os.path.join(PROJECT_ROOT, "backend")
+    hidden_imports = []
+    if os.path.isdir(backend_dir):
+        hidden_imports.append('backend')
+        for root, dirs, files in os.walk(backend_dir):
+            for f in files:
+                if f.endswith('.py') and f != '__init__.py':
+                    rel = os.path.relpath(os.path.join(root, f), PROJECT_ROOT)
+                    module_name = rel.replace(os.sep, '.').replace('.py', '')
+                    hidden_imports.append(module_name)
     
     pyinstaller_cmd = [
         'pyinstaller',
@@ -59,11 +69,17 @@ def build_desktop():
         '--onefile',
         '--windowed',
         f'--add-data={dist_data}',
-        f'--add-data={backend_data}',
         f'--add-data={config_data}',
+        # Add project root to module search path so 'backend' is importable
+        f'--paths={PROJECT_ROOT}',
         f'--name={app_name}',
-        run_desktop_path
     ]
+    
+    # Add all discovered backend modules as hidden imports
+    for mod in hidden_imports:
+        pyinstaller_cmd.append(f'--hidden-import={mod}')
+    
+    pyinstaller_cmd.append(run_desktop_path)
 
     if app_icon:
         icon_full_path = os.path.join(PROJECT_ROOT, app_icon)
